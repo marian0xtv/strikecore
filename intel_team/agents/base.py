@@ -95,33 +95,28 @@ class BaseSpecialist(abc.ABC):
         user_message: str,
         system_extra: str = "",
         *,
-        model_override: str | None = None,
-        max_tokens: int | None = None,
-        temperature: float | None = None,
+        tools: list[dict[str, Any]] | None = None,
     ) -> str:
         """Single LLM dispatch surface — anchored to the existing ProviderRouter.
 
+        ``core.provider_router.ProviderRouter.chat()`` accepts only
+        ``messages``, ``tools``, and ``system`` — the model, max_tokens and
+        temperature are sourced from the active provider's settings. Per-agent
+        tuning (``self.config.max_tokens``, ``temperature``, ``model_override``)
+        is reserved for a future iteration when the router grows per-call
+        knobs; today the values are advisory for budgeting / documentation.
+
         Prompt caching: the underlying ``providers.anthropic_provider`` enables
-        Anthropic prompt caching when the system prompt is large enough; nothing
-        is needed here.
+        Anthropic prompt caching when the system prompt is large enough; the
+        intel-team prompts are large markdown files specifically designed to
+        benefit from that cache.
         """
         system = self.system_prompt
         if system_extra:
             system = f"{system}\n\n{system_extra}"
 
         messages = [{"role": "user", "content": user_message}]
-
-        kwargs: dict[str, Any] = {
-            "messages": messages,
-            "system": system,
-            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
-            "temperature": temperature if temperature is not None else self.config.temperature,
-        }
-        model = model_override or self.config.model_override
-        if model:
-            kwargs["model"] = model
-
-        response = await self.router.chat(**kwargs)
+        response = await self.router.chat(messages=messages, tools=tools, system=system)
         # ProviderRouter returns a ProviderResponse with .content
         return getattr(response, "content", str(response))
 
