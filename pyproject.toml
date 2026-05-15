@@ -1,0 +1,117 @@
+[project]
+name = "strikecore"
+version = "1.1.0-rc1"
+description = "OSINT & offensive-intelligence platform (Palantir-Maven-grade) with embedded multi-agent intel team."
+readme = "README.md"
+license = { text = "Proprietary" }
+requires-python = ">=3.11"
+authors = [{ name = "atlas", email = "atlas@strikecore.local" }]
+
+dependencies = [
+    # ── Existing runtime (from requirements.txt) ──
+    "rich>=13.7.0",
+    "prompt_toolkit>=3.0.43",
+    "anthropic>=0.40.0",
+    "openai>=1.50.0",
+    "httpx>=0.27.0",
+    "loguru>=0.7.2",
+    "toml>=0.10.2",
+    "python-telegram-bot>=21.0",
+    "twilio>=9.0.0",
+    "aiohttp>=3.9.0",
+    "psutil>=5.9.0",
+    "jinja2>=3.1.0",
+    # ── Existing code uses these but not in requirements.txt ──
+    "phonenumbers>=8.13.0",      # core/fp_filter.py
+    "email-validator>=2.1.0",    # core/fp_filter.py
+    "networkx>=3.2",             # core/graph_engine.py
+    "pyvis>=0.3.2",              # graph rendering
+    "beautifulsoup4>=4.12",      # parsing
+    "lxml>=5.0",                 # XML/HTML
+    "Pillow>=10.0",              # photo_forensics
+    "tldextract>=5.1",           # URL handling
+    "stem>=1.8.2",               # Tor control
+    # ── New: engineering hygiene ──
+    "python-dotenv>=1.0",        # .env loader
+    "pydantic>=2.5",             # typed models
+    "pydantic-settings>=2.1",    # env-driven config
+    # ── New: intel_team multi-agent layer ──
+    "anyio>=4.0",                # parallel agent dispatch
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.4",
+    "mypy>=1.8",
+    "types-toml",
+    "types-PyYAML",
+]
+db = [
+    # Optional: switch from JSON store to Postgres later
+    "SQLAlchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.2",
+    "redis>=5.0",
+]
+api = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
+
+[project.scripts]
+strikecore = "main:entry_point"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+py-modules = ["main"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cli*", "core*", "agents*", "bin*", "config*", "intel_team*", "intelligence*", "messaging*", "log_system*", "providers*", "osint_agent*", "voip*"]
+exclude = ["strikecore*", "strikecore-env*", "lib*", "frontend*", "tests*", ".backup*", "reports*"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+exclude = [
+    ".venv", "venv", "lib", "lib64", "include", "bin/python*",
+    "strikecore", "strikecore-env", "frontend/node_modules",
+    "frontend/.nuxt", "frontend/.output", ".backup", "__pycache__",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "S", "C4", "SIM", "RUF"]
+ignore = [
+    "S101",    # assert OK in tests
+    "S603",    # subprocess used intentionally (executor.py)
+    "S607",    # partial executable paths used intentionally
+    "E501",    # long lines allowed (audit JSONL, prompts)
+    "N802",    # function naming relaxed (matches OSINT tool names)
+    "N806",    # variable naming relaxed
+]
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+ignore_missing_imports = true
+exclude = [
+    "^lib/", "^bin/python", "^strikecore/", "^strikecore-env/",
+    "^frontend/", "^\\.backup/", "^\\.venv/",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-q --strict-markers"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests that hit real external services",
+    "intel_team: tests for the embedded multi-agent intel team",
+]

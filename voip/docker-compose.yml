@@ -1,0 +1,36 @@
+version: "3.8"
+
+# StrikeCore VoIP Gateway — Asterisk PBX with WebRTC + Auto-PCAP
+#
+# Start:  cd /home/mariello/strikecore/voip && podman-compose up -d
+# Stop:   podman-compose down
+# Logs:   podman-compose logs -f asterisk
+# Shell:  podman-compose exec asterisk asterisk -r
+#
+# After starting, configure your SIP trunk in config/pjsip_trunk.conf
+
+services:
+  asterisk:
+    image: docker.io/andrius/asterisk:20-alpine
+    container_name: strikecore-pbx
+    restart: unless-stopped
+    network_mode: host            # Host networking for RTP/STUN (required for P2P IP capture)
+    cap_add:
+      - NET_ADMIN                 # For packet capture
+      - NET_RAW
+    volumes:
+      - ./config/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./config/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./config/http.conf:/etc/asterisk/http.conf:ro
+      - ./config/rtp.conf:/etc/asterisk/rtp.conf:ro
+      - ./config/modules.conf:/etc/asterisk/modules.conf:ro
+      - ./config/pjsip_trunk.conf:/etc/asterisk/pjsip_trunk.conf:ro
+      - ./recordings:/var/spool/asterisk/recording
+      - ./pcap:/var/log/asterisk/pcap
+    environment:
+      - TZ=Europe/Rome
+    healthcheck:
+      test: ["CMD", "asterisk", "-rx", "core show channels"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,62 @@
+#!/bin/bash
+# StrikeCore: Instagram authenticated lookup
+# Requires: INSTAGRAM_SESSION_ID environment variable or ~/.strikecore/ig_session
+USER="${1:?Usage: ig-auth-lookup USERNAME}"
+
+# Load session from file or env
+SESSION="${INSTAGRAM_SESSION_ID:-}"
+if [ -z "$SESSION" ] && [ -f ~/.strikecore/ig_session ]; then
+    SESSION=$(cat ~/.strikecore/ig_session)
+fi
+
+if [ -z "$SESSION" ]; then
+    echo "ERROR: No Instagram session configured."
+    echo ""
+    echo "HOW TO GET YOUR SESSION ID:"
+    echo "  1. Open Instagram.com in Chrome/Firefox"
+    echo "  2. Login with a throwaway account (NOT your real one)"
+    echo "  3. Open DevTools (F12) > Application > Cookies > instagram.com"
+    echo "  4. Copy the value of 'sessionid' cookie"
+    echo "  5. Save it:  echo 'YOUR_SESSION_ID' > ~/.strikecore/ig_session"
+    echo ""
+    echo "Or set env: export INSTAGRAM_SESSION_ID=YOUR_SESSION_ID"
+    exit 1
+fi
+
+# Authenticated API call
+curl -s "https://i.instagram.com/api/v1/users/web_profile_info/?username=${USER}" \
+  -H "User-Agent: Instagram 275.0.0.27.98 Android (30/11; 420dpi; 1080x2280; samsung; SM-G991B)" \
+  -H "X-IG-App-ID: 936619743392459" \
+  -H "Cookie: sessionid=${SESSION}" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    if data.get(\"status\") == \"fail\":
+        print(f\"API Error: {data.get(\"message\", \"unknown\")}\")
+        sys.exit(1)
+    user = data.get(\"data\", {}).get(\"user\", {})
+    if not user:
+        print(\"No user data returned\")
+        sys.exit(1)
+    fields = [
+        \"full_name\", \"biography\", \"id\", \"username\",
+        \"is_professional_account\", \"is_business_account\", \"category_name\",
+        \"business_email\", \"business_phone_number\",
+        \"public_email\", \"public_phone_number\", \"contact_phone_number\",
+        \"external_url\", \"external_lynx_url\",
+        \"edge_followed_by\", \"edge_follow\", \"edge_owner_to_timeline_media\",
+        \"fb_profile_biolink\", \"bio_links\",
+        \"profile_pic_url_hd\", \"is_private\", \"is_verified\",
+        \"connected_fb_page\", \"highlight_reel_count\",
+    ]
+    for f in fields:
+        v = user.get(f)
+        if v is not None:
+            if isinstance(v, dict):
+                v = v.get(\"count\", v.get(\"url\", json.dumps(v)))
+            elif isinstance(v, list):
+                v = json.dumps(v)
+            print(f\"{f}: {v}\")
+except Exception as e:
+    print(f\"Parse error: {e}\")
+"

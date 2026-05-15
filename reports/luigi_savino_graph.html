@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>StrikeCore — Luigi Savino — Social Graph</title>
+    <script src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; background: #1a1a2e; font-family: 'Courier New', monospace; color: #e0e0e0; }
+        #header { background: #16213e; padding: 15px 20px; border-bottom: 2px solid #0f3460; }
+        #header h1 { margin: 0; color: #e94560; font-size: 18px; }
+        #header p { margin: 5px 0 0; color: #888; font-size: 12px; }
+        #graph { width: 100%; height: calc(100vh - 70px); }
+        #legend { position: absolute; top: 80px; right: 10px; background: rgba(22,33,62,0.95); padding: 10px; border-radius: 5px; font-size: 11px; border: 1px solid #0f3460; }
+        .legend-item { margin: 4px 0; }
+        .legend-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h1>STRIKECORE // SOCIAL INTELLIGENCE GRAPH</h1>
+        <p>Target: Luigi Savino | Generated: 2026-04-26 22:41 | Nodes: 45 | Edges: 49</p>
+    </div>
+    <div id="legend">
+        <div class="legend-item"><span class="legend-dot" style="background:#e94560"></span>Target</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#f5a623"></span>Alias</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#4fc3f7"></span>Email</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#66bb6a"></span>Platform</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#90a4ae"></span>Platform (minor)</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#ab47bc"></span>Organization</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#ff7043"></span>Connection</div>
+        <div class="legend-item"><span class="legend-dot" style="background:#26a69a"></span>Location</div>
+    </div>
+    <div id="graph"></div>
+    <script>
+        var graphData = {"nodes": [{"id": "target", "label": "Luigi Savino", "group": "target", "title": "Target | Roma | Developer/Chef\nIG: @luigisav | FB: 1439591776\nGH: LuigiSavino", "size": 30}, {"id": "email_0", "label": "luigi.savino.95", "group": "email", "title": "luigi.savino.95@gmail.com", "size": 12}, {"id": "email_1", "label": "luxdj95", "group": "email", "title": "luxdj95@gmail.com", "size": 12}, {"id": "email_2", "label": "luigi.savino", "group": "email", "title": "luigi.savino@guest.telecomitalia.it", "size": 12}, {"id": "email_3", "label": "luigi.savino", "group": "email", "title": "luigi.savino@mail-bip.com", "size": 12}, {"id": "platform_0", "label": "Instagram", "group": "platform", "title": "Instagram\n@luigisav\n1732 followers, Chef", "size": 15}, {"id": "platform_1", "label": "Facebook", "group": "platform", "title": "Facebook\nID 1439591776\nLinked from IG", "size": 15}, {"id": "platform_2", "label": "GitHub", "group": "platform", "title": "GitHub\nLuigiSavino\n6 repos, Python/TypeScript", "size": 15}, {"id": "platform_3", "label": "Eventbrite", "group": "platform", "title": "Eventbrite\nluigi.savino.95\nvia Holehe", "size": 15}, {"id": "platform_4", "label": "Freelancer", "group": "platform", "title": "Freelancer\nluigi.savino.95\nvia Holehe", "size": 15}, {"id": "platform_5", "label": "Office365", "group": "platform", "title": "Office365\nluigi.savino.95\nvia Holehe", "size": 15}, {"id": "platform_6", "label": "Spotify", "group": "platform", "title": "Spotify\nluxdj95\nvia Holehe", "size": 15}, {"id": "platform_7", "label": "Twitter", "group": "platform", "title": "Twitter\nluxdj95\nvia Holehe", "size": 15}, {"id": "platform_8", "label": "WordPress", "group": "platform", "title": "WordPress\nluxdj95\nvia Holehe", "size": 15}, {"id": "platform_9", "label": "Firefox", "group": "platform", "title": "Firefox\nluxdj95\nvia Holehe", "size": 15}, {"id": "platform_10", "label": "Gravatar", "group": "platform", "title": "Gravatar\nluxdj95\nvia Holehe", "size": 15}, {"id": "org_0", "label": "TIM / Telecom Italia", "group": "organization", "title": "TIM / Telecom Italia\nContractor (email: guest.telecomitalia.it)", "size": 18}, {"id": "org_1", "label": "BIP Consulting", "group": "organization", "title": "BIP Consulting\nContractor (email: mail-bip.com)", "size": 18}, {"id": "ghconn_0", "label": "Javier Godoy", "group": "connection", "title": "GitHub: gaulatti\nfollower+following", "size": 10}, {"id": "ghconn_1", "label": "Alessandro", "group": "connection", "title": "GitHub: alepipe\nfollower", "size": 10}, {"id": "ghconn_2", "label": "Alessandro", "group": "connection", "title": "GitHub: alemari7284\nfollower", "size": 10}, {"id": "ghconn_3", "label": "Vittorio Ciampi", "group": "connection", "title": "GitHub: gianfrizio\nfollower", "size": 10}, {"id": "igconn_0", "label": "liz_leo17", "group": "connection", "title": "Instagram: @liz_leo17\nInstagram tagged", "size": 10}, {"id": "sherlock_0", "label": "Blogspot", "group": "platform_minor", "title": "Blogspot\nUsername: luigisavino", "size": 8}, {"id": "sherlock_1", "label": "Cults3D", "group": "platform_minor", "title": "Cults3D\nUsername: luigisavino", "size": 8}, {"id": "sherlock_2", "label": "DeviantArt", "group": "platform_minor", "title": "DeviantArt\nUsername: luigisavino", "size": 8}, {"id": "sherlock_3", "label": "Disqus", "group": "platform_minor", "title": "Disqus\nUsername: luigisavino", "size": 8}, {"id": "sherlock_4", "label": "Docker Hub", "group": "platform_minor", "title": "Docker Hub\nUsername: luigisavino", "size": 8}, {"id": "sherlock_5", "label": "Flipboard", "group": "platform_minor", "title": "Flipboard\nUsername: luigisavino", "size": 8}, {"id": "sherlock_6", "label": "HackMD", "group": "platform_minor", "title": "HackMD\nUsername: luigisavino", "size": 8}, {"id": "sherlock_7", "label": "Medium", "group": "platform_minor", "title": "Medium\nUsername: luigisavino", "size": 8}, {"id": "sherlock_8", "label": "NitroType", "group": "platform_minor", "title": "NitroType\nUsername: luigisavino", "size": 8}, {"id": "sherlock_9", "label": "Replit", "group": "platform_minor", "title": "Replit\nUsername: luigisavino", "size": 8}, {"id": "sherlock_10", "label": "Reverbnation", "group": "platform_minor", "title": "Reverbnation\nUsername: luigisavino", "size": 8}, {"id": "sherlock_11", "label": "Roblox", "group": "platform_minor", "title": "Roblox\nUsername: luigisavino", "size": 8}, {"id": "sherlock_12", "label": "Scratch", "group": "platform_minor", "title": "Scratch\nUsername: luigisavino", "size": 8}, {"id": "sherlock_13", "label": "Snapchat", "group": "platform_minor", "title": "Snapchat\nUsername: luigisavino", "size": 8}, {"id": "sherlock_14", "label": "TikTok", "group": "platform_minor", "title": "TikTok\nUsername: luigisavino", "size": 8}, {"id": "sherlock_15", "label": "Trello", "group": "platform_minor", "title": "Trello\nUsername: luigisavino", "size": 8}, {"id": "sherlock_16", "label": "YouTube", "group": "platform_minor", "title": "YouTube\nUsername: luigisavino", "size": 8}, {"id": "sherlock_17", "label": "Pinterest", "group": "platform_minor", "title": "Pinterest\nUsername: luigisavino", "size": 8}, {"id": "sherlock_18", "label": "Mastodon", "group": "platform_minor", "title": "Mastodon\nUsername: luigisavino", "size": 8}, {"id": "loc_roma", "label": "Roma", "group": "location", "title": "Confirmed: GitHub profile", "size": 14}, {"id": "loc_thailand", "label": "Thailand", "group": "location", "title": "Instagram post location", "size": 10}, {"id": "alias_luxdj95", "label": "luxdj95", "group": "alias", "title": "Alt identity\nluxdj95@gmail.com\nSpotify, Twitter, Gravatar", "size": 14}], "edges": [{"from": "target", "to": "email_0", "label": "email"}, {"from": "target", "to": "email_1", "label": "email"}, {"from": "target", "to": "email_2", "label": "email"}, {"from": "target", "to": "email_3", "label": "email"}, {"from": "target", "to": "platform_0", "label": "@luigisav"}, {"from": "target", "to": "platform_1", "label": "ID 1439591776"}, {"from": "target", "to": "platform_2", "label": "LuigiSavino"}, {"from": "target", "to": "platform_3", "label": "luigi.savino.95"}, {"from": "target", "to": "platform_4", "label": "luigi.savino.95"}, {"from": "target", "to": "platform_5", "label": "luigi.savino.95"}, {"from": "target", "to": "platform_6", "label": "luxdj95"}, {"from": "target", "to": "platform_7", "label": "luxdj95"}, {"from": "target", "to": "platform_8", "label": "luxdj95"}, {"from": "target", "to": "platform_9", "label": "luxdj95"}, {"from": "target", "to": "platform_10", "label": "luxdj95"}, {"from": "target", "to": "org_0", "label": "works at"}, {"from": "target", "to": "org_1", "label": "works at"}, {"from": "target", "to": "ghconn_0", "label": "GH follower+following"}, {"from": "target", "to": "ghconn_1", "label": "GH follower"}, {"from": "target", "to": "ghconn_2", "label": "GH follower"}, {"from": "target", "to": "ghconn_3", "label": "GH follower"}, {"from": "target", "to": "igconn_0", "label": "Instagram tagged"}, {"from": "target", "to": "sherlock_0", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_1", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_2", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_3", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_4", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_5", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_6", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_7", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_8", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_9", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_10", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_11", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_12", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_13", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_14", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_15", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_16", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_17", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "sherlock_18", "label": "luigisavino", "dashes": true}, {"from": "target", "to": "loc_roma", "label": "lives in"}, {"from": "target", "to": "loc_thailand", "label": "visited"}, {"from": "target", "to": "alias_luxdj95", "label": "alias"}, {"from": "alias_luxdj95", "to": "platform_6", "label": "registered"}, {"from": "alias_luxdj95", "to": "platform_7", "label": "registered"}, {"from": "alias_luxdj95", "to": "platform_8", "label": "registered"}, {"from": "alias_luxdj95", "to": "platform_9", "label": "registered"}, {"from": "alias_luxdj95", "to": "platform_10", "label": "registered"}]};
+        
+        var colors = {
+            "target": "#e94560",
+            "alias": "#f5a623",
+            "email": "#4fc3f7",
+            "platform": "#66bb6a",
+            "platform_minor": "#90a4ae",
+            "organization": "#ab47bc",
+            "connection": "#ff7043",
+            "location": "#26a69a",
+        };
+        
+        var nodes = new vis.DataSet(graphData.nodes.map(function(n) {
+            return {
+                id: n.id,
+                label: n.label,
+                title: n.title,
+                size: n.size,
+                color: { background: colors[n.group] || "#999", border: "#fff", highlight: { background: "#fff", border: colors[n.group] || "#999" } },
+                font: { color: "#e0e0e0", size: 11 },
+                shape: n.group === "target" ? "star" : (n.group === "alias" ? "diamond" : "dot"),
+            };
+        }));
+        
+        var edges = new vis.DataSet(graphData.edges.map(function(e) {
+            return {
+                from: e.from,
+                to: e.to,
+                label: e.label || "",
+                color: { color: "#555", highlight: "#e94560" },
+                font: { color: "#888", size: 9, strokeWidth: 0 },
+                dashes: e.dashes || false,
+                arrows: "to",
+                smooth: { type: "continuous" },
+            };
+        }));
+        
+        var container = document.getElementById("graph");
+        var data = { nodes: nodes, edges: edges };
+        var options = {
+            physics: {
+                solver: "forceAtlas2Based",
+                forceAtlas2Based: { gravitationalConstant: -50, centralGravity: 0.005, springLength: 150, springConstant: 0.02 },
+                stabilization: { iterations: 200 },
+            },
+            interaction: { hover: true, tooltipDelay: 100 },
+        };
+        var network = new vis.Network(container, data, options);
+    </script>
+</body>
+</html>

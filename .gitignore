@@ -1,0 +1,140 @@
+# StrikeCore .gitignore — engineered 2026-05-15
+# Doctrine: never commit secrets, never commit venv binaries, never commit target PII.
+
+# ── Outer venv pollution (project root happens to be a venv — historical) ──
+/bin/python
+/bin/python3
+/bin/python3.*
+/bin/pip
+/bin/pip3
+/bin/pip3.*
+/bin/wheel
+/bin/Activate*
+/bin/activate*
+/bin/easy_install*
+/bin/__pycache__/
+/include/
+/lib/
+/lib64
+/share/
+/pyvenv.cfg
+
+# ── Nested venvs ──
+/strikecore/bin/
+/strikecore/include/
+/strikecore/lib/
+/strikecore/lib64
+/strikecore/share/
+/strikecore/pyvenv.cfg
+/strikecore-env/
+
+# ── Modern Python venv (uv-managed, going forward) ──
+.venv/
+venv/
+env/
+
+# ── Python build/cache ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+*.egg
+build/
+dist/
+.eggs/
+pip-log.txt
+pip-delete-this-directory.txt
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+.nox/
+*.cover
+*.py,cover
+.hypothesis/
+
+# ── Frontend (Nuxt) ──
+frontend/node_modules/
+frontend/.nuxt/
+frontend/.output/
+frontend/dist/
+frontend/.nitro
+frontend/.cache
+
+# ── Secrets (HARD RULE — never commit) ──
+.env
+.env.local
+.env.*.local
+.env.production
+.env.development
+.secrets-inventory.md
+*.pem
+*.key
+!nuclei-templates/**/*.key
+secrets/
+credentials*
+*.token
+*.cred
+*authorized_keys*
+
+# ── Backups (operational, not source) ──
+.backup/
+*.bak
+*.orig
+*.swp
+*.swo
+
+# ── Runtime / operational artefacts ──
+*.log
+*.log.*
+.claude-implementation.log
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+
+# ── Investigation outputs (PII — must stay in ~/strikecore-data) ──
+/*.txt
+!/requirements.txt
+/aspide66*
+/bernantonio*
+/bungaro*
+/chiara_bruni*
+/comandoreale*
+/filippo_calcagna*
+/gaia_pagin*
+/giuseppe*
+/iacoz*
+/infodbwebapp*
+/luigi*
+/luxdj*
+/manuale_*
+/michi*
+/page.mua*
+/recoverycode*
+/spirobulo*
+/usoigauth*
+/8.txt
+/LuigiSavino.txt
+
+# ── OS clutter ──
+.DS_Store
+.DS_Store?
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ── IDE ──
+.idea/
+.vscode/
+*.iml
+.project
+.pydevproject
+
+# ── Misc ──
+*.tar.gz
+*.zip
+*.7z

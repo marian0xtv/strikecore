@@ -1,0 +1,64 @@
+[operator]
+name = "operator"
+working_dir = "~/assessments"
+verbosity = "verbose"
+
+[ai]
+active_provider = "anthropic"
+fallback_chain = ["anthropic", "openrouter", "ollama"]
+
+[ai.anthropic]
+api_key = ""
+model = "claude-sonnet-4-20250514"
+max_tokens = 8192
+
+[ai.openrouter]
+api_key = ""
+base_url = "https://openrouter.ai/api/v1"
+model = "anthropic/claude-sonnet-4-5"
+max_tokens = 8192
+
+[ai.ollama]
+base_url = "http://localhost:11434"
+model = "qwen2.5:14b"
+temperature = 0.1
+context_window = 32768
+auto_pull = true
+
+[ai.vllm]
+base_url = "http://localhost:8000/v1"
+api_key = ""
+model = "Qwen/Qwen2.5-Coder-32B-Instruct"
+max_tokens = 8192
+
+[ai.lmstudio]
+base_url = "http://localhost:1234/v1"
+model = ""
+
+[ai.custom]
+base_url = ""
+api_key = ""
+model = ""
+provider_type = "openai_compatible"
+
+[telegram]
+enabled = false
+bot_token = ""
+chat_id = ""
+alert_on_critical = true
+alert_on_high = true
+
+[whatsapp]
+enabled = false
+twilio_sid = ""
+twilio_token = ""
+from_number = ""
+to_number = ""
+
+[logging]
+level = "DEBUG"
+json_logs = true
+audit_trail = true
+
+[onboarding]
+complete = false

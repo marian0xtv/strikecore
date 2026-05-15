@@ -1,0 +1,65 @@
+#!/bin/bash
+# StrikeCore: Facebook authenticated lookup
+# Requires: FACEBOOK_TOKEN env or ~/.strikecore/fb_token
+TARGET="${1:?Usage: fb-lookup FB_ID_OR_USERNAME}"
+
+TOKEN="${FACEBOOK_TOKEN:-}"
+if [ -z "$TOKEN" ] && [ -f ~/.strikecore/fb_token ]; then
+    TOKEN=$(cat ~/.strikecore/fb_token)
+fi
+
+if [ -z "$TOKEN" ]; then
+    echo "ERROR: No Facebook token configured."
+    echo ""
+    echo "HOW TO GET A TOKEN:"
+    echo "  1. Go to https://developers.facebook.com/tools/explorer/"
+    echo "  2. Login and generate a User Access Token"
+    echo "  3. Select permissions: public_profile, email, user_friends"
+    echo "  4. Copy the token"
+    echo "  5. Save:  echo 'TOKEN' > ~/.strikecore/fb_token"
+    echo ""
+    echo "Or: export FACEBOOK_TOKEN=YOUR_TOKEN"
+    echo ""
+    echo "ALTERNATIVE (no token, limited data):"
+    
+    # Try unauthenticated scrape
+    echo "--- Attempting unauthenticated lookup ---"
+    proxychains4 -q curl -sL "https://mbasic.facebook.com/profile.php?id=${TARGET}" \
+      -H "User-Agent: Mozilla/5.0 (Linux; Android 12; SM-G991B)" 2>/dev/null | \
+      python3 -c "
+import sys, re
+html = sys.stdin.read()
+title = re.search(r'<title>([^<]+)</title>', html)
+if title and title.group(1) not in ['Facebook', 'Log in', 'Aanmelden']:
+    print(f'Name: {title.group(1).strip()}')
+# Extract visible info
+for pattern, label in [
+    (r'class=\"[^\"]*bio[^\"]*\"[^>]*>([^<]+)', 'Bio'),
+    (r'Lives in <[^>]+>([^<]+)', 'Lives in'),
+    (r'From <[^>]+>([^<]+)', 'From'),
+    (r'Studied at <[^>]+>([^<]+)', 'Education'),
+    (r'Works at <[^>]+>([^<]+)', 'Work'),
+]:
+    m = re.search(pattern, html)
+    if m: print(f'{label}: {m.group(1).strip()}')
+"
+    exit 0
+fi
+
+# Authenticated Graph API call
+echo "=== Facebook Graph API ==="
+curl -s "https://graph.facebook.com/v18.0/${TARGET}?fields=name,email,link,about,location,hometown,birthday,gender,website,work,education&access_token=${TOKEN}" | python3 -m json.tool 2>/dev/null
+
+# Friends (if permission granted)
+echo ""
+echo "=== Friends ==="
+curl -s "https://graph.facebook.com/v18.0/${TARGET}/friends?access_token=${TOKEN}&limit=25" | python3 -c "
+import sys, json
+try:
+    data = json.load(sys.stdin)
+    friends = data.get(\"data\", [])
+    print(f\"Friends visible: {len(friends)}\")
+    for f in friends[:10]:
+        print(f\"  {f.get(\"name\", \"?\")} (ID: {f.get(\"id\", \"?\")})\")
+except: print(\"No friend data\")
+"

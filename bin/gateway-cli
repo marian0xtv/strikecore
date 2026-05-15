@@ -1,0 +1,335 @@
+#!/usr/bin/env python3
+"""
+StrikeCore Gateway CLI — Interactive outbound call tool.
+
+Fallback CLI when the dashboard is unavailable.
+Supports: Asterisk SIP trunk, Twilio API, WhatsApp (via Twilio).
+
+Usage:
+    gateway-cli                    # Interactive mode
+    gateway-cli +39XXXXXXXXXX      # Quick call
+    gateway-cli --method asterisk +14788126676
+    gateway-cli --status
+"""
+from __future__ import annotations
+import argparse, json, os, re, readline, subprocess, sys, time
+from datetime import datetime
+from pathlib import Path
+
+# ── ANSI ──
+C = '\033[1;36m'; G = '\033[1;32m'; Y = '\033[1;33m'; R = '\033[1;31m'
+W = '\033[1;37m'; D = '\033[0;90m'; X = '\033[0m'
+LINE = '=' * 55
+
+TWILIO_FROM = '+14788126676'
+TWILIO_ENV = Path.home() / '.strikecore' / 'twilio.env'
+LOG_DIR = Path.home() / 'strikecore-data' / 'ip_logs'
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def banner():
+    print(f"""{R}
+  ╔═══════════════════════════════════════════╗
+  ║  {W}STRIKECORE GATEWAY CLI{R}                  ║
+  ║  {D}VoIP Outbound Call Interface{R}            ║
+  ╚═══════════════════════════════════════════╝{X}
+  Trunk: {C}sorgenia-energia.pstn.twilio.com{X}
+  From:  {C}{TWILIO_FROM}{X}
+  """)
+
+
+def normalize_e164(number: str) -> str:
+    """Normalize input to E.164 format."""
+    num = re.sub(r'[\s\-\.\(\)]', '', number.strip())
+    if not num:
+        return ''
+    # Already E.164
+    if num.startswith('+'):
+        return num
+    # Italian national (0xxx -> +39xxx)
+    if num.startswith('0') and len(num) >= 6:
+        return '+39' + num[1:]
+    # US (1xxxxxxxxxx -> +1xxxxxxxxxx)
+    if num.startswith('1') and len(num) == 11:
+        return '+' + num
+    # Raw digits — assume needs +
+    if num.isdigit() and len(num) >= 10:
+        return '+' + num
+    return num
+
+
+def asterisk_status() -> dict:
+    """Check native Asterisk status."""
+    info = {'running': False, 'version': '', 'trunk': 'unknown', 'channels': 0}
+    try:
+        r = subprocess.run(['sudo', 'asterisk', '-rx', 'core show version'],
+                           capture_output=True, text=True, timeout=5)
+        if r.returncode == 0 and 'Asterisk' in r.stdout:
+            info['running'] = True
+            info['version'] = r.stdout.strip()[:60]
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(['sudo', 'asterisk', '-rx', 'pjsip show endpoint twilio'],
+                           capture_output=True, text=True, timeout=5)
+        if 'twilio' in r.stdout.lower():
+            info['trunk'] = 'online'
+    except Exception:
+        pass
+    try:
+        r = subprocess.run(['sudo', 'asterisk', '-rx', 'core show channels count'],
+                           capture_output=True, text=True, timeout=5)
+        for line in r.stdout.split('\n'):
+            if 'active channel' in line:
+                info['channels'] = int(re.search(r'(\d+)', line).group(1))
+    except Exception:
+        pass
+    return info
+
+
+def call_asterisk(number: str, sniff: bool = True) -> bool:
+    """Place call via native Asterisk PBX."""
+    e164 = normalize_e164(number)
+    if not e164:
+        print(f'  {R}Numero non valido{X}')
+        return False
+
+    print(f'  {Y}Chiamata Asterisk:{X} {C}{e164}{X}')
+
+    # Start PCAP sniffing
+    pcap_file = None
+    pcap_proc = None
+    if sniff:
+        pcap_file = str(LOG_DIR / f"{re.sub(r'[^0-9]', '', e164)}_{int(time.time())}.pcap")
+        try:
+            pcap_proc = subprocess.Popen(
+                ['tshark', '-i', 'any', '-f', 'udp and portrange 10000-60000',
+                 '-a', 'duration:90', '-w', pcap_file],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            print(f'  {G}PCAP avviato:{X} {pcap_file}')
+        except Exception as e:
+            print(f'  {D}PCAP non disponibile: {e}{X}')
+
+    # Originate call
+    try:
+        r = subprocess.run(
+            ['sudo', 'asterisk', '-rx',
+             f'channel originate PJSIP/{e164}@twilio application Playback tt-monkeys'],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode == 0:
+            print(f'  {G}Chiamata avviata{X}')
+            if r.stdout.strip():
+                print(f'  {D}{r.stdout.strip()[:100]}{X}')
+            # Log
+            log = {
+                'type': 'asterisk_cli', 'timestamp': datetime.now().isoformat(),
+                'number': e164, 'from': TWILIO_FROM, 'method': 'asterisk_native',
+                'pcap': pcap_file,
+            }
+            out = LOG_DIR / f"{re.sub(r'[^0-9]', '', e164)}_asterisk.json"
+            out.write_text(json.dumps(log, indent=2))
+            return True
+        else:
+            print(f'  {R}Errore:{X} {r.stderr.strip() or r.stdout.strip()}')
+            return False
+    except Exception as e:
+        print(f'  {R}Errore: {e}{X}')
+        return False
+
+
+def call_twilio(number: str, tts: str = '', whatsapp: bool = False) -> bool:
+    """Place call via Twilio REST API."""
+    e164 = normalize_e164(number)
+    if not e164:
+        print(f'  {R}Numero non valido{X}')
+        return False
+
+    method_label = 'WhatsApp (Twilio)' if whatsapp else 'Twilio API'
+    print(f'  {Y}Chiamata {method_label}:{X} {C}{e164}{X}')
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'voip' / 'scripts'))
+    try:
+        from twilio_bridge import make_call
+        label = f"{'wa_' if whatsapp else ''}{re.sub(r'[^0-9]', '', e164)}"
+        call = make_call(e164, tts_message=tts, label=label)
+        if call:
+            print(f'  {G}Call SID:{X} {call.sid}')
+            print(f'  {G}Status:{X}  {call.status}')
+            return True
+        else:
+            print(f'  {R}Chiamata fallita — controlla twilio.env{X}')
+            return False
+    except ImportError:
+        print(f'  {R}twilio_bridge non trovato{X}')
+        return False
+    except Exception as e:
+        print(f'  {R}Errore: {e}{X}')
+        return False
+
+
+def show_status():
+    """Print full gateway status."""
+    print(f'\n  {W}STATO GATEWAY{X}')
+    print(f'  {LINE}')
+
+    ast = asterisk_status()
+    color = G if ast['running'] else R
+    print(f'  Asterisk:  {color}{"ONLINE" if ast["running"] else "OFFLINE"}{X}')
+    if ast['version']:
+        print(f'             {D}{ast["version"]}{X}')
+    print(f'  Trunk:     {G if ast["trunk"]=="online" else R}{ast["trunk"]}{X}')
+    print(f'  Canali:    {ast["channels"]}')
+
+    twilio_ok = TWILIO_ENV.exists()
+    print(f'  Twilio:    {G if twilio_ok else R}{"CONFIGURATO" if twilio_ok else "NON CONFIGURATO"}{X}')
+    print(f'  From:      {C}{TWILIO_FROM}{X}')
+
+    # Count call logs
+    call_count = len(list(LOG_DIR.glob('*_call.json'))) + len(list(LOG_DIR.glob('*_asterisk.json')))
+    pcap_count = len(list(LOG_DIR.glob('*.pcap')))
+    print(f'  Log calls: {call_count}')
+    print(f'  PCAP:      {pcap_count}')
+    print(f'  {LINE}\n')
+
+
+def show_recent():
+    """Show recent call results."""
+    files = sorted(LOG_DIR.glob('*_call.json'), key=lambda f: f.stat().st_mtime, reverse=True)[:10]
+    if not files:
+        print(f'  {D}Nessun risultato recente.{X}')
+        return
+    print(f'\n  {W}RISULTATI RECENTI{X}')
+    print(f'  {LINE}')
+    for f in files:
+        try:
+            data = json.loads(f.read_text())
+            top = data.get('results', [{}])[0] if data.get('results') else {}
+            geo = top.get('geo', {})
+            label = data.get('label', f.stem)[:20]
+            ip = top.get('ip', '?')[:15]
+            city = geo.get('city', '?')
+            score = top.get('score', 0)
+            ts = data.get('timestamp', '')[:16]
+            stun = f' [STUN x{top["stun"]}]' if top.get('stun') else ''
+            print(f'  {D}{ts}{X}  {C}{label:20}{X} {G}{ip:15}{X} {city:15} score:{score}{stun}')
+        except Exception:
+            pass
+    print()
+
+
+def interactive():
+    """Interactive prompt loop."""
+    banner()
+    show_status()
+
+    print(f"""  {W}COMANDI:{X}
+  {C}<numero>{X}            Chiama (usa metodo corrente)
+  {C}method <m>{X}          Cambia metodo: asterisk | twilio | whatsapp
+  {C}tts <numero> <msg>{X}  Chiama con messaggio TTS
+  {C}status{X}              Stato gateway
+  {C}recent{X}              Risultati recenti call sniffer
+  {C}channels{X}            Canali Asterisk attivi
+  {C}hangup{X}              Termina tutte le chiamate
+  {C}log{X}                 Abilita SIP debug
+  {C}nolog{X}               Disabilita SIP debug
+  {C}quit{X}                Esci
+""")
+
+    method = 'asterisk'
+    print(f'  Metodo corrente: {Y}{method}{X}\n')
+
+    while True:
+        try:
+            raw = input(f'  {R}strikecore{X}:{C}gw{X}> ').strip()
+        except (EOFError, KeyboardInterrupt):
+            print(f'\n  {D}Bye.{X}')
+            break
+
+        if not raw:
+            continue
+
+        parts = raw.split(None, 2)
+        cmd = parts[0].lower()
+
+        if cmd in ('quit', 'exit', 'q'):
+            print(f'  {D}Bye.{X}')
+            break
+
+        elif cmd == 'method':
+            if len(parts) < 2:
+                print(f'  Metodo corrente: {Y}{method}{X}')
+                print(f'  Opzioni: asterisk | twilio | whatsapp')
+            elif parts[1] in ('asterisk', 'twilio', 'whatsapp'):
+                method = parts[1]
+                print(f'  Metodo: {Y}{method}{X}')
+            else:
+                print(f'  {R}Metodo non valido.{X} Opzioni: asterisk | twilio | whatsapp')
+
+        elif cmd == 'status':
+            show_status()
+
+        elif cmd == 'recent':
+            show_recent()
+
+        elif cmd == 'channels':
+            subprocess.run(['sudo', 'asterisk', '-rx', 'core show channels'])
+
+        elif cmd == 'hangup':
+            subprocess.run(['sudo', 'asterisk', '-rx', 'channel request hangup all'])
+            print(f'  {Y}Tutte le chiamate terminate.{X}')
+
+        elif cmd == 'log':
+            subprocess.run(['sudo', 'asterisk', '-rx', 'pjsip set logger on'])
+            print(f'  {G}SIP debug attivato{X}')
+
+        elif cmd == 'nolog':
+            subprocess.run(['sudo', 'asterisk', '-rx', 'pjsip set logger off'])
+            print(f'  {D}SIP debug disattivato{X}')
+
+        elif cmd == 'tts' and len(parts) >= 3:
+            call_twilio(parts[1], tts=parts[2])
+
+        elif cmd.startswith('+') or cmd.startswith('0') or cmd.isdigit():
+            # Direct number
+            if method == 'asterisk':
+                call_asterisk(raw)
+            elif method == 'twilio':
+                call_twilio(raw)
+            elif method == 'whatsapp':
+                call_twilio(raw, whatsapp=True)
+
+        else:
+            print(f'  {D}Comando non riconosciuto. Digita un numero o "status".{X}')
+
+
+def main():
+    parser = argparse.ArgumentParser(description='StrikeCore Gateway CLI')
+    parser.add_argument('number', nargs='?', help='Numero da chiamare (E.164 o nazionale)')
+    parser.add_argument('--method', '-m', choices=['asterisk', 'twilio', 'whatsapp'],
+                        default='asterisk', help='Metodo di chiamata')
+    parser.add_argument('--tts', default='', help='Messaggio TTS (solo Twilio)')
+    parser.add_argument('--status', '-s', action='store_true', help='Mostra stato gateway')
+    parser.add_argument('--recent', '-r', action='store_true', help='Risultati recenti')
+    parser.add_argument('--no-sniff', action='store_true', help='Disabilita PCAP auto')
+
+    args = parser.parse_args()
+
+    if args.status:
+        banner()
+        show_status()
+    elif args.recent:
+        show_recent()
+    elif args.number:
+        banner()
+        if args.method == 'asterisk':
+            call_asterisk(args.number, sniff=not args.no_sniff)
+        elif args.method in ('twilio', 'whatsapp'):
+            call_twilio(args.number, tts=args.tts, whatsapp=(args.method == 'whatsapp'))
+    else:
+        interactive()
+
+
+if __name__ == '__main__':
+    main()
