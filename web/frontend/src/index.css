@@ -1,0 +1,29 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root { color-scheme: dark; }
+html, body, #root { height: 100%; }
+
+.scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+.scrollbar-thin::-webkit-scrollbar-track { background: #11151c; }
+.scrollbar-thin::-webkit-scrollbar-thumb { background: #2a3245; border-radius: 4px; }
+
+.kbd {
+  @apply inline-block rounded border border-line px-1.5 py-[1px] text-xs text-muted bg-panel;
+}
+
+.card {
+  @apply rounded-lg border border-line bg-panel p-4;
+}
+.card-header { @apply mb-3 flex items-center justify-between text-sm font-semibold uppercase tracking-wide text-muted; }
+.badge { @apply inline-block rounded px-1.5 py-0.5 text-[10px] uppercase tracking-wide; }
+.badge-good { @apply bg-good/15 text-good; }
+.badge-warn { @apply bg-warn/15 text-warn; }
+.badge-bad  { @apply bg-bad/15  text-bad; }
+.badge-info { @apply bg-accent/15 text-accent; }
+
+table.tbl    { @apply w-full text-sm; }
+table.tbl th { @apply border-b border-line py-2 px-3 text-left text-xs uppercase tracking-wide text-muted font-semibold; }
+table.tbl td { @apply border-b border-line/50 py-2 px-3 align-top; }
+table.tbl tr:hover td { background: #161b25; }
