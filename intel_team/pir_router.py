@@ -87,6 +87,13 @@ class PIRRouter(BaseSpecialist):
     # Internals
     # ------------------------------------------------------------------
 
+    # Substrings in PIR.target that mean "the target field is genuinely empty"
+    # (operator handed us nothing). Anything else is a valid target, even if
+    # the *PIR question* describes it as fictional / synthetic / test.
+    _EMPTY_TARGET_TOKENS: frozenset[str] = frozenset(
+        {"", "none", "null", "n/a", "nan", "-", "tbd", "?"}
+    )
+
     def _parse(self, content: str, pir: PIR) -> "RoutingDecision":
         cleaned = _strip_code_fence(content)
         try:
@@ -94,20 +101,42 @@ class PIRRouter(BaseSpecialist):
         except json.JSONDecodeError as exc:
             raise ValueError(f"PIR router did not return valid JSON: {exc}") from exc
 
+        # The router occasionally over-triggers ``{"error":"PIR missing target"}``
+        # when the *question* describes the target as fictional / synthetic /
+        # null — even though ``pir.target`` is a perfectly valid identifier
+        # ("strikecore_pipeline_verify_v6", say). Only honour the error if the
+        # operator-supplied ``pir.target`` is actually empty/sentinel.
         if data.get("error"):
-            return RoutingDecision(
-                pir_id=pir.id,
-                primary_domains=[],
-                secondary_domains=[],
-                rationale=str(data["error"]),
-                constraints={"error": data["error"]},
-                expected_pivots=[],
+            target_token = (pir.target or "").strip().lower()
+            if target_token in self._EMPTY_TARGET_TOKENS:
+                return RoutingDecision(
+                    pir_id=pir.id,
+                    primary_domains=[],
+                    secondary_domains=[],
+                    rationale=str(data["error"]),
+                    constraints={**pir.constraints, "error": data["error"]},
+                    expected_pivots=[],
+                )
+            logger.warning(
+                "PIR router emitted error=%r but pir.target=%r is non-empty — "
+                "ignoring router error and falling back to hint/defaults",
+                data["error"],
+                pir.target,
             )
+            # Fall through to the standard fallback path below.
+            data = {}
 
         primary = [Domain(d) for d in data.get("primary_domains", []) if d in _DOMAIN_VALUES]
         secondary = [Domain(d) for d in data.get("secondary_domains", []) if d in _DOMAIN_VALUES]
+
+        # Fallback chain: router-decided primaries → operator hints → DEFAULT_DOMAINS.
+        # Operator hints (from ``--domains`` on the CLI) ARE authoritative when
+        # the router decides nothing; otherwise the router decides.
         if not primary:
-            primary = self.DEFAULT_DOMAINS[:]
+            if pir.domains_hint:
+                primary = list(pir.domains_hint)
+            if not primary:
+                primary = list(self.DEFAULT_DOMAINS)
 
         return RoutingDecision(
             pir_id=pir.id,
