@@ -16,6 +16,15 @@ from .base import BaseProvider, ProviderResponse, ToolCall
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MODELS = (
+    # Account-accessible 2026-05-15 — informational only (not enforced).
+    "claude-opus-4-7",
+    "claude-sonnet-4-6",
+    "claude-opus-4-6",
+    "claude-haiku-4-5-20251001",
+    "claude-sonnet-4-5-20250929",
+    "claude-opus-4-5-20251101",
+    "claude-opus-4-1-20250805",
+    # Historical defaults — kept for back-compat with old config.toml values
     "claude-sonnet-4-20250514",
     "claude-opus-4-20250514",
 )
@@ -46,8 +55,15 @@ class AnthropicProvider(BaseProvider):
             api_key=api_key,
             base_url=config.get("base_url"),
         )
-        self._model = model
-        self._max_tokens = max_tokens
+        # Prefer config-supplied values over constructor defaults so settings.toml
+        # / env overrides actually flow through (CLAUDE.md §8 engineering hygiene).
+        cfg_model = config.get("model")
+        self._model = cfg_model if cfg_model else model
+        cfg_max = config.get("max_tokens")
+        try:
+            self._max_tokens = int(cfg_max) if cfg_max else max_tokens
+        except (TypeError, ValueError):
+            self._max_tokens = max_tokens
 
     # ------------------------------------------------------------------
     # BaseProvider interface
