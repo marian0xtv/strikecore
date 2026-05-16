@@ -24,7 +24,10 @@ from typing import Any
 from intel_team.agents.analyst import AnalystAgent
 from intel_team.agents.audit import AuditAgent
 from intel_team.agents.base import BaseSpecialist
+from intel_team.agents.geoint import GEOINTSpecialist
+from intel_team.agents.socialint import SOCIALINTSpecialist
 from intel_team.agents.socint import SOCINTSpecialist
+from intel_team.agents.webint import WEBINTSpecialist
 from intel_team.pir_router import PIRRouter, RoutingDecision
 from intel_team.quality_gate import QualityGate
 from intel_team.types import AgentReport, Domain, Dossier, PIR
@@ -38,10 +41,13 @@ logger = logging.getLogger("intel_team.orchestrator")
 
 SPECIALIST_REGISTRY: dict[Domain, type[BaseSpecialist]] = {
     Domain.SOCINT: SOCINTSpecialist,
-    # GEOINT, TECHINT, WEBINT, THREATINT, CROSSDB, REDTEAM specialists are
-    # planned but not implemented in this iteration. Until they ship, the
-    # orchestrator records them as gaps so the analyst surfaces the missing
-    # coverage to the operator instead of silently skipping the domain.
+    Domain.SOCIALINT: SOCIALINTSpecialist,
+    Domain.GEOINT: GEOINTSpecialist,
+    Domain.WEBINT: WEBINTSpecialist,
+    # TECHINT, THREATINT, CROSSDB, REDTEAM specialists remain on the roadmap.
+    # Until they ship, the orchestrator records them as gaps so the analyst
+    # surfaces the missing coverage to the operator instead of silently
+    # skipping the domain.
 }
 
 

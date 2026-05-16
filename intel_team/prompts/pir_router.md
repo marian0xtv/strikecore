@@ -31,13 +31,16 @@ You receive:
 
 | Domain | When to include |
 |---|---|
-| **socint**    | Username, handle, social profile, photo identification, follower/comment graph, public posts |
+| **socint**    | Account *discovery* on platforms: usernames, handles, profile verification, social profile presence |
+| **socialint** | Social-*graph* analysis: mutuals, comment graph, sockpuppet linkage, cross-platform identity, relationship inference (distinct from SOCINT — SOCINT finds accounts, SOCIALINT analyses the network between them) |
 | **geoint**    | GPS metadata, image EXIF, post-time-vs-claimed-timezone correlation, place-of-interest identification |
 | **techint**   | Domain, subdomain, certificate, DNS, IP, port, fingerprint, infrastructure correlation |
-| **webint**    | Breach corpora, paste sites, archives (Wayback), Google/Bing dorking, exposed documents (PDFs/DOCX with metadata) |
+| **webint**    | Breach corpora, paste sites, archives (Wayback), Google/Bing dorking, exposed documents (PDFs/DOCX with metadata), code-repo archaeology, Italian public registries (paginebianche, registroimprese, ANSA, Albo Pretorio) |
 | **threatint** | IOC enrichment, abuse history, CTI feeds, malware/phishing infrastructure links |
 | **crossdb**   | Cross-database fusion (HIBP × DeHashed × IntelX × paginebianche × registroimprese …), entity resolution across sources |
 | **redteam**   | Vulnerability mapping, exploit feasibility, attack-surface review (only when **explicitly authorised**) |
+
+**Pairing hint**: SOCINT and SOCIALINT are almost always selected *together* — SOCINT identifies the accounts, then SOCIALINT analyses what those accounts say about the target's network. Selecting SOCIALINT without SOCINT only makes sense when the operator has already supplied the account inventory.
 
 ## Doctrine
 

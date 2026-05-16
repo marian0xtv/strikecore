@@ -22,10 +22,11 @@ def _utc_now_iso() -> str:
 class Domain(str, Enum):
     """OSINT/intel domains served by intel-team specialists."""
 
-    SOCINT = "socint"        # social media, usernames, personal accounts
-    GEOINT = "geoint"        # geolocation, image GPS, timezone correlation
+    SOCINT = "socint"        # platform account discovery, username/handle enumeration, profile verification
+    SOCIALINT = "socialint"  # social-graph analysis: mutuals, comment graph, sockpuppet linkage, relationship inference
+    GEOINT = "geoint"        # geolocation, image GPS, timezone correlation, place-of-interest identification
     TECHINT = "techint"      # infrastructure, DNS, certs, ports, fingerprinting
-    WEBINT = "webint"        # exposed data, breach correlation, dorking, archives
+    WEBINT = "webint"        # exposed data, breach correlation, dorking, archives, document forensics
     THREATINT = "threatint"  # CTI feeds, IOC enrichment, malware/abuse history
     CROSSDB = "crossdb"      # cross-database fusion / entity resolution
     REDTEAM = "redteam"      # offensive recon, vulnerability mapping, exploit feasibility
