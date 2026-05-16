@@ -1,0 +1,67 @@
+# StrikeCore — restructure services
+#
+# Postgres 16 + pgvector for entity/dossier/trace/token-ledger/memory-embedding storage.
+# Redis 7 for job queue + LISTEN/NOTIFY pub-sub for live WebSocket trace streaming.
+# Caddy is intentionally NOT here — Phase C adds it once the frontend builds.
+#
+# Host-port mapping deliberately avoids conflicts with the sister project
+# `worldwideview-db-1` already occupying 5432 on this host. Strikecore uses
+# 5433 / 6379. See .env for credentials (chmod 600, git-ignored).
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: strikecore-pg
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-strikecore}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-strikecore}
+      # Surface real model context windows in queries / dashboards
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ./.docker-volumes/pg:/var/lib/postgresql/data
+      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-strikecore} -d ${POSTGRES_DB:-strikecore}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - strikecore-internal
+
+  redis:
+    image: redis:7-alpine
+    container_name: strikecore-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --appendonly
+      - "yes"
+      - --maxmemory
+      - "512mb"
+      - --maxmemory-policy
+      - allkeys-lru
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - ./.docker-volumes/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "PING"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - strikecore-internal
+
+networks:
+  strikecore-internal:
+    driver: bridge
+    name: strikecore-net

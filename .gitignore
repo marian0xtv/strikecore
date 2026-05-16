@@ -138,3 +138,10 @@ ehthumbs.db
 *.tar.gz
 *.zip
 *.7z
+
+# Hermes restructure (Phase A+)
+.docker-volumes/
+.claude-restructure.log
+.audit-pre-restructure.md
+.md-migration.md
+.legacy-md/
