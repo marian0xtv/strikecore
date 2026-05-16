@@ -26,6 +26,22 @@ from intel_team.types import AgentReport, Domain, Dossier, PIR
 
 logger = logging.getLogger("intel_team.agents.analyst")
 
+# --- Phase B compatibility: agent.executor passes specialist/audit reports as
+# already-dictified payloads (per tool_gateway). The analyst was written assuming
+# AgentReport objects. These helpers tolerate both.
+def _to_dict(r):
+    if isinstance(r, dict):
+        return r
+    if hasattr(r, "to_dict"):
+        return r.to_dict()
+    return {"raw": repr(r)}
+
+def _g(r, name, default=None):
+    if isinstance(r, dict):
+        return r.get(name, default)
+    return getattr(r, name, default)
+
+
 
 class AnalystAgent(BaseSpecialist):
     """Top-of-pipeline synthesiser. Uses the highest-quality model tier."""
@@ -56,8 +72,8 @@ class AnalystAgent(BaseSpecialist):
                 "target": pir.target,
                 "constraints": pir.constraints,
             },
-            "specialist_reports": [r.to_dict() for r in specialist_reports],
-            "audit_reports": [r.to_dict() for r in audit_reports],
+            "specialist_reports": [_to_dict(r) for r in specialist_reports],
+            "audit_reports": [_to_dict(r) for r in audit_reports],
             "investigation_store_summary": store_summary,
             "operator_notes": operator_notes,
         }
@@ -143,9 +159,9 @@ class AnalystAgent(BaseSpecialist):
         d.findings_by_domain = {
             str(k): list(v) for k, v in parsed.get("findings_by_domain", {}).items() if isinstance(v, list)
         }
-        d.agent_reports = [r.to_dict() for r in specialist_reports]
+        d.agent_reports = [_to_dict(r) for r in specialist_reports]
         d.audit_trail = [
-            f"audit:{r.agent}:{len(r.devils_advocate_notes)} note(s)"
+            f"audit:{_g(r, 'agent', '?')}:{len(_g(r, 'devils_advocate_notes', []) or [])} note(s)"
             for r in audit_reports
         ]
         return d
@@ -173,17 +189,18 @@ class AnalystAgent(BaseSpecialist):
         # Surface all findings by domain
         by_domain: dict[str, list[dict[str, Any]]] = {}
         for r in specialist_reports:
-            key = r.domain.value
+            dom = _g(r, "domain", "unknown")
+            key = getattr(dom, "value", dom) if dom else "unknown"
             bucket = by_domain.setdefault(key, [])
-            for f in r.findings:
-                d_item = f.to_dict()
+            for f in (_g(r, "findings", []) or []):
+                d_item = f if isinstance(f, dict) else (f.to_dict() if hasattr(f, "to_dict") else {})
                 bucket.append(
                     {
-                        "type": d_item["type"],
-                        "value": d_item["value"],
-                        "confidence": d_item["confidence"],
-                        "independent_sources": d_item["independent_sources"],
-                        "notes": d_item["notes"],
+                        "type": d_item.get("type", ""),
+                        "value": d_item.get("value", ""),
+                        "confidence": d_item.get("confidence", 0.0),
+                        "independent_sources": d_item.get("independent_sources", 0),
+                        "notes": d_item.get("notes", ""),
                     }
                 )
         d.findings_by_domain = by_domain
@@ -204,19 +221,19 @@ class AnalystAgent(BaseSpecialist):
 
         # Aggregate gaps and audit notes
         for r in specialist_reports:
-            d.intelligence_gaps.extend(r.gaps)
+            d.intelligence_gaps.extend(_g(r, "gaps", []) or [])
         for r in audit_reports:
             d.intelligence_gaps.extend(
-                f"audit: {n}" for n in r.devils_advocate_notes if "[VERDICT]" in n
+                f"audit: {n}" for n in (_g(r, "devils_advocate_notes", []) or []) if "[VERDICT]" in str(n)
             )
 
         d.recommended_actions = [
             "Re-run the analyst once the LLM provider is reachable.",
             "Manually triage the highest-confidence findings above.",
         ]
-        d.agent_reports = [r.to_dict() for r in specialist_reports]
+        d.agent_reports = [_to_dict(r) for r in specialist_reports]
         d.audit_trail = [
-            f"audit:{r.agent}:{len(r.devils_advocate_notes)} note(s)"
+            f"audit:{_g(r, 'agent', '?')}:{len(_g(r, 'devils_advocate_notes', []) or [])} note(s)"
             for r in audit_reports
         ]
         return d
