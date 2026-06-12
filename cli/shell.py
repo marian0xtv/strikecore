@@ -65,6 +65,7 @@ _ALL_COMMANDS = [
     "models",
     "model",
     "/model",
+    "hephaestus",
     "tools",
     "processes",
     "kill",
@@ -94,6 +95,10 @@ _COMMAND_HELP: List[Tuple[str, str, str]] = [
     ("/model", "profile <name>", "Switch routing profile (default|hephaestus|dossier)"),
     ("/model", "lethality <lvl>", "Dossier lethality (economy|balanced|max)"),
     ("/model", "<phase> <model>", "Per-step model override; /model cost shows run cost"),
+    ("hephaestus", "", "Toolsmith status + pending sandbox gates (alias /hephaestus)"),
+    ("hephaestus", "run --focus <cat>", "Run a discovery/research/decide pass [--depth N --dry-run --lethality L]"),
+    ("hephaestus", "report [run_id]", "Print a run report (latest if omitted)"),
+    ("hephaestus", "approve <run_id> <H1|H3>", "Clear a pending sandbox gate"),
     ("tools", "", "List all security tools with install status"),
     ("processes", "", "Show background processes"),
     ("kill", "<pid>", "Kill a background process"),
@@ -178,6 +183,11 @@ class StrikeCoreCompleter(Completer):
         elif cmd == "model" and word_count == 2:
             if "switch".startswith(prefix):
                 yield Completion("switch", start_position=start_pos)
+
+        elif cmd in ("hephaestus", "/hephaestus") and word_count == 2:
+            for sub in ("run", "status", "report", "approve"):
+                if sub.startswith(prefix):
+                    yield Completion(sub, start_position=start_pos)
 
         elif cmd == "kill" and word_count == 2:
             for pid in self._shell.background_pids:
@@ -591,6 +601,93 @@ class StrikeCoreShell:
         ov[phase] = model
         self.settings.set("ai.model_policy.overrides", ov); persist()
         console.print(f"[{THEME['success']}]Override: {phase} -> {model}[/{THEME['success']}]")
+
+    def _cmd_hephaestus(self, args: List[str]) -> None:
+        """hephaestus — native StrikeCore toolsmith (alias /hephaestus).
+
+        hephaestus                          show recent runs + pending gates
+        hephaestus run --focus <cat> [--depth N] [--dry-run] [--lethality L]
+        hephaestus status                   list past runs + cost
+        hephaestus report [run_id]          run report (latest if omitted)
+        hephaestus approve <run_id> <H1|H3> clear a pending sandbox gate
+        """
+        from hephaestus import cli_core
+
+        sub = args[0].lower() if args else "status"
+
+        if sub in ("status", "show", ""):
+            runs = cli_core.list_runs()
+            if not runs:
+                console.print(f"[{THEME['muted']}](no Hephaestus runs yet) — "
+                              f"try: hephaestus run --focus <category>[/{THEME['muted']}]")
+                return
+            console.print(f"[{THEME['accent']}]Hephaestus runs[/{THEME['accent']}]")
+            for r in runs:
+                console.print(f"  {r['run_id']}  {r['status']:<10} "
+                              f"{r['params']['focus_category']:<16} "
+                              f"{cli_core.fmt_usd(r['totals']['cost_usd_micros'])}  {r['started_at']}")
+            pending = [(r["run_id"], p) for r in runs for p in r.get("pending_approvals", [])]
+            for rid, p in pending:
+                console.print(f"  [{THEME['warning']}]PENDING {p['gate']} on {rid}: "
+                              f"{p['reason']}  ->  hephaestus approve {rid} {p['gate']}[/{THEME['warning']}]")
+            return
+
+        if sub == "run":
+            focus = self._flag_value(args, "--focus")
+            if not focus:
+                console.print(f"[{THEME['warning']}]Usage: hephaestus run --focus <category> "
+                              f"[--depth N] [--dry-run] [--lethality economy|balanced|max][/{THEME['warning']}]")
+                return
+            depth = int(self._flag_value(args, "--depth") or 1)
+            dry_run = "--dry-run" in args
+            lethality = self._flag_value(args, "--lethality") or "balanced"
+            console.print(f"[{THEME['muted']}]Hephaestus: focus={focus} depth={depth} "
+                          f"lethality={lethality}{' (dry-run)' if dry_run else ''} ...[/{THEME['muted']}]")
+            try:
+                rec = cli_core.run_pass(focus=focus, depth=depth, dry_run=dry_run,
+                                        profile="hephaestus", lethality=lethality)
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[{THEME['error']}]hephaestus run failed: {exc}[/{THEME['error']}]")
+                return
+            for line in cli_core.summary_lines(rec):
+                console.print(line)
+            console.print(f"[{THEME['muted']}]run record: "
+                          f"{cli_core.run_record_path(rec['run_id'])}[/{THEME['muted']}]")
+            return
+
+        if sub == "report":
+            run_id = args[1] if len(args) > 1 else None
+            rec = cli_core.get_run(run_id)
+            if rec is None:
+                console.print(f"[{THEME['warning']}]no such run: {run_id or '(latest)'}[/{THEME['warning']}]")
+                return
+            for line in cli_core.summary_lines(rec) + cli_core.decision_lines(rec):
+                console.print(line)
+            return
+
+        if sub == "approve":
+            if len(args) < 3 or args[2] not in ("H1", "H3"):
+                console.print(f"[{THEME['warning']}]Usage: hephaestus approve <run_id> <H1|H3>[/{THEME['warning']}]")
+                return
+            res = cli_core.approve_gate(args[1], args[2])
+            if not res["ok"]:
+                console.print(f"[{THEME['warning']}]{res['error']}[/{THEME['warning']}]")
+                return
+            console.print(f"[{THEME['success']}]approved {args[2]} for run {args[1]}; "
+                          f"{res['remaining']} gate(s) still pending.[/{THEME['success']}]")
+            return
+
+        console.print(f"[{THEME['warning']}]Unknown: hephaestus {sub}. "
+                      f"Try: status | run | report | approve[/{THEME['warning']}]")
+
+    @staticmethod
+    def _flag_value(args: List[str], flag: str) -> str | None:
+        """Return the token following `flag` in args, or None."""
+        if flag in args:
+            i = args.index(flag)
+            if i + 1 < len(args):
+                return args[i + 1]
+        return None
 
     def _cmd_tools(self, args: List[str]) -> None:
         # Comprehensive security tools list
@@ -1252,6 +1349,8 @@ class StrikeCoreShell:
         "models": _cmd_models,
         "model": _cmd_model,
         "/model": _cmd_model_router,
+        "hephaestus": _cmd_hephaestus,
+        "/hephaestus": _cmd_hephaestus,
         "tools": _cmd_tools,
         "processes": _cmd_processes,
         "kill": _cmd_kill,
