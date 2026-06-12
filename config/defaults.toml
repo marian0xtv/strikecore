@@ -7,6 +7,24 @@ verbosity = "verbose"
 active_provider = "anthropic"
 fallback_chain = ["anthropic", "openrouter", "ollama"]
 
+# Cost-aware LLM router (GR3). Every StrikeCore LLM call routes through
+# core.provider_router.ProviderRouter, which picks a model per task_type using
+# this policy. Settable at runtime via the /model command (persisted here).
+#   mode:        "auto" (cost-aware routing) | "pinned" (force pinned_model)
+#   pinned_model: friendly name (fable|opus|haiku) or full id, used when pinned
+#   profile:     "default" | "hephaestus" | "dossier"
+#   lethality:   "economy" | "balanced" | "max"  (dossier analysis escalation)
+#   overrides:   per-phase model overrides, e.g. { planner = "fable" }
+#   dry_run:     true = no real API calls; routing+cost computed offline
+[ai.model_policy]
+mode = "auto"
+pinned_model = ""
+profile = "default"
+lethality = "balanced"
+dry_run = false
+
+[ai.model_policy.overrides]
+
 [ai.anthropic]
 api_key = ""
 model = "claude-sonnet-4-20250514"

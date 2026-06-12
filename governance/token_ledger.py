@@ -18,8 +18,14 @@ import time
 from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
-import psycopg2
-from psycopg2.extras import Json
+try:  # psycopg2 is optional — DB logging is best-effort (see log_llm_call)
+    import psycopg2
+    from psycopg2.extras import Json
+    _HAS_PSYCOPG2 = True
+except ImportError:  # pragma: no cover - exercised in DB-less environments
+    psycopg2 = None  # type: ignore
+    Json = None  # type: ignore
+    _HAS_PSYCOPG2 = False
 
 from governance.limits import model_info
 
@@ -121,6 +127,9 @@ def log_llm_call(
         cost = estimate_cost_micros(model, input_tokens, output_tokens, cached_tokens, cache_write_tokens)
     except Exception:  # noqa: BLE001
         cost = 0
+
+    if not _HAS_PSYCOPG2:
+        return None  # DB-less environment: cost still computable via estimate_cost_micros
 
     sql = """
         INSERT INTO token_ledger

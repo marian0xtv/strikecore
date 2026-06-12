@@ -148,12 +148,12 @@ class AnthropicProvider(BaseProvider):
     def supports_tools(self) -> bool:
         return True
 
-    def _effective_max_tokens(self) -> int:
+    def _effective_max_tokens(self, model: str | None = None) -> int:
         """Resolve max_tokens at call time — override wins, else governance limits."""
         if self._max_tokens_override is not None:
             return self._max_tokens_override
         # Headroom of 0 — caller already requested via the real limit
-        return _gov_max_for(self._model)
+        return _gov_max_for(model or self._model)
 
     async def health_check(self) -> bool:
         """Send a minimal request to verify connectivity."""
@@ -173,30 +173,49 @@ class AnthropicProvider(BaseProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         system: str | None = None,
+        *,
+        model: str | None = None,
+        task_type: str | None = None,
     ) -> ProviderResponse:
         """Execute a chat completion with exponential-backoff retry.
 
-        Now also: (a) caches the system prompt via Anthropic prompt caching,
-        (b) logs the call to ``token_ledger`` with cache usage info.
+        ``model`` overrides the configured model for this call only (cost-aware
+        router); ``task_type`` is recorded in the token ledger. Also: (a) caches
+        the system prompt via Anthropic prompt caching, (b) logs cache usage.
+
+        Note: Fable 5 / Opus 4.8 reject ``temperature``/``top_p``/``top_k`` and
+        ``thinking.budget_tokens``; this builder sends none of them, so the
+        per-call model override is safe across the whole target set.
         """
-        kwargs, extra_headers = self._build_request(messages, tools, system)
+        kwargs, extra_headers = self._build_request(messages, tools, system, model=model)
         start = time.monotonic()
         response = await self._send_with_retry(kwargs, extra_headers=extra_headers)
         latency_ms = int((time.monotonic() - start) * 1000)
         normalized = self._normalize(response)
 
-        # Phase A — token ledger (best-effort; never raises)
+        # surface cache tokens + routing hint for the router's cost ledger
         try:
             usage = _gov_cache_usage(getattr(response, "usage", None))
+            normalized.cached_read_tokens = usage["cache_read_input_tokens"]
+            normalized.cache_write_tokens = usage["cache_creation_input_tokens"]
+        except Exception:  # noqa: BLE001
+            usage = {"input_tokens": normalized.input_tokens,
+                     "output_tokens": normalized.output_tokens,
+                     "cache_read_input_tokens": 0, "cache_creation_input_tokens": 0}
+        normalized.task_type = task_type or ""
+
+        # Phase A — token ledger (best-effort; never raises)
+        try:
             _gov_log(
                 provider="anthropic",
-                model=getattr(response, "model", self._model),
+                model=getattr(response, "model", model or self._model),
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
                 cached_tokens=usage["cache_read_input_tokens"],
                 cache_write_tokens=usage["cache_creation_input_tokens"],
                 latency_ms=latency_ms,
                 cache_hit=usage["cache_read_input_tokens"] > 0,
+                task_type=task_type,
             )
         except Exception as exc:  # noqa: BLE001
             logger.debug("token_ledger logging skipped: %s", exc)
@@ -246,16 +265,19 @@ class AnthropicProvider(BaseProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         system: str | None,
+        model: str | None = None,
     ) -> tuple[dict[str, Any], dict[str, str]]:
         """Construct the kwargs dict for the Anthropic Messages API.
 
-        Returns (kwargs, extra_headers).
+        ``model`` overrides the configured model for this request. Returns
+        (kwargs, extra_headers).
         """
         anthropic_messages = self._convert_messages(messages)
+        eff_model = model or self._model
 
         kwargs: dict[str, Any] = {
-            "model": self._model,
-            "max_tokens": self._effective_max_tokens(),
+            "model": eff_model,
+            "max_tokens": self._effective_max_tokens(eff_model),
             "messages": anthropic_messages,
         }
 

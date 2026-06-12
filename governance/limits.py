@@ -42,6 +42,22 @@ class ModelLimits:
 # Static table — refresh_from_provider() can extend / overwrite at runtime.
 # Pricing reflects Anthropic's public 2026 pricing page.
 _ANTHROPIC_MODELS: dict[str, ModelLimits] = {
+    # --- cost-aware router target models (verified via claude-api skill 2026-06) ---
+    "claude-fable-5": ModelLimits(
+        context_window=1_000_000, max_output=32_000,
+        pricing_input_per_mtok_usd=10.0, pricing_output_per_mtok_usd=50.0,
+        pricing_cached_read_per_mtok_usd=1.0, pricing_cache_write_per_mtok_usd=12.5,
+    ),
+    "claude-opus-4-8": ModelLimits(
+        context_window=1_000_000, max_output=32_000,
+        pricing_input_per_mtok_usd=5.0, pricing_output_per_mtok_usd=25.0,
+        pricing_cached_read_per_mtok_usd=0.5, pricing_cache_write_per_mtok_usd=6.25,
+    ),
+    "claude-haiku-4-5": ModelLimits(
+        context_window=200_000, max_output=8_000,
+        pricing_input_per_mtok_usd=1.0, pricing_output_per_mtok_usd=5.0,
+        pricing_cached_read_per_mtok_usd=0.10, pricing_cache_write_per_mtok_usd=1.25,
+    ),
     "claude-opus-4-7": ModelLimits(
         context_window=200_000, max_output=32_000,
         pricing_input_per_mtok_usd=15.0, pricing_output_per_mtok_usd=75.0,

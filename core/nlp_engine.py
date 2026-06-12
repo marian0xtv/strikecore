@@ -350,7 +350,8 @@ class NaturalLanguageEngine:
             return False
 
     def _call_ai(self, messages: List[Dict[str, str]]) -> Any:
-        coro = self._router.chat(messages=messages, system=NL_SYSTEM_PROMPT)
+        coro = self._router.chat(messages=messages, system=NL_SYSTEM_PROMPT,
+                                 task_type="orchestration")
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:

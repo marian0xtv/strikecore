@@ -138,7 +138,8 @@ async def plan(*, router: Any, ctx: RunContext, pir: str, gateway: ToolGateway) 
     try:
         user_msg = _build_user_message(target, pir, ctx.constraints, available)
         messages = [{"role": "user", "content": user_msg}]
-        response = await router.chat(messages=messages, system=_SYSTEM_PROMPT)
+        response = await router.chat(messages=messages, system=_SYSTEM_PROMPT,
+                                     task_type="planner")
         content = getattr(response, "content", str(response))
         parsed = _safe_parse_json(content)
         if parsed is None:

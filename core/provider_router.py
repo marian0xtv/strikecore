@@ -15,10 +15,45 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
-from rich.console import Console
-from rich.table import Table
+try:  # rich is a UI nicety — the router must run headless (cron, hooks, dry-runs)
+    from rich.console import Console
+    from rich.table import Table
+except ImportError:  # pragma: no cover - exercised in minimal environments
+    class Console:  # minimal stand-in with a .print()
+        def print(self, *args, **kwargs):
+            print(*[a for a in args])
+
+    class Table:  # placeholder; real rendering only used when rich is present
+        def __init__(self, *a, **k): ...
+        def add_column(self, *a, **k): ...
+        def add_row(self, *a, **k): ...
 
 from providers.base import BaseProvider, ProviderResponse
+from governance.model_router import (
+    ModelPolicy,
+    policy_from_settings,
+    resolve_model_name,
+)
+from governance.token_ledger import estimate_cost_micros, log_llm_call
+
+
+# ---------------------------------------------------------------------------
+# Per-call cost telemetry (cost-aware router, GR3)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CallRecord:
+    """One LLM call's routing decision + token usage + estimated cost."""
+
+    task_type: str
+    model: str
+    routing_reason: str
+    input_tokens: int
+    output_tokens: int
+    cost_micros: int
+    dry_run: bool = False
+
 
 # ---------------------------------------------------------------------------
 # Provider stats
@@ -143,6 +178,54 @@ class ProviderRouter:
 
         self._init_providers()
 
+        # Cost-aware routing (GR3): the shared policy + an in-memory ledger so
+        # cost is visible per run/mode without depending on Postgres.
+        self.policy: ModelPolicy = policy_from_settings(settings)
+        self._dry_run: bool = bool(settings.get("ai.model_policy.dry_run", False))
+        self.call_log: list[CallRecord] = []
+
+    # ------------------------------------------------------------------
+    # Cost-aware routing API
+    # ------------------------------------------------------------------
+
+    def set_policy(self, policy: ModelPolicy) -> None:
+        self.policy = policy
+
+    def set_dry_run(self, on: bool) -> None:
+        self._dry_run = bool(on)
+
+    def reset_log(self) -> None:
+        self.call_log = []
+
+    def run_cost(self) -> dict[str, Any]:
+        """Aggregate the in-memory call log into a per-mode cost summary."""
+        by_model: dict[str, dict[str, int]] = {}
+        by_task: dict[str, dict[str, Any]] = {}
+        total_in = total_out = total_cost = 0
+        for r in self.call_log:
+            total_in += r.input_tokens
+            total_out += r.output_tokens
+            total_cost += r.cost_micros
+            m = by_model.setdefault(r.model, {"calls": 0, "input_tokens": 0,
+                                              "output_tokens": 0, "cost_micros": 0})
+            m["calls"] += 1
+            m["input_tokens"] += r.input_tokens
+            m["output_tokens"] += r.output_tokens
+            m["cost_micros"] += r.cost_micros
+            t = by_task.setdefault(r.task_type or "unknown",
+                                   {"model": r.model, "reason": r.routing_reason,
+                                    "calls": 0, "cost_micros": 0})
+            t["calls"] += 1
+            t["cost_micros"] += r.cost_micros
+        return {
+            "profile": self.policy.profile,
+            "policy": self.policy.as_dict(),
+            "totals": {"calls": len(self.call_log), "input_tokens": total_in,
+                       "output_tokens": total_out, "cost_usd_micros": total_cost},
+            "by_model": by_model,
+            "by_task_type": by_task,
+        }
+
     # ------------------------------------------------------------------
     # Initialisation
     # ------------------------------------------------------------------
@@ -241,12 +324,31 @@ class ProviderRouter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         system: str | None = None,
+        *,
+        task_type: str | None = None,
+        model: str | None = None,
+        dry_run: bool | None = None,
     ) -> ProviderResponse:
         """Send a chat completion request through the fallback chain.
 
-        Tries the active provider first, then each subsequent provider in the
-        fallback chain.  If all fail, raises ``ConnectionError``.
+        The cost-aware router (GR3) picks the model from ``self.policy`` based on
+        ``task_type`` unless an explicit ``model`` is given. Every call is
+        recorded to ``self.call_log`` with model/reason/tokens/cost. When
+        ``dry_run`` is on, no provider is called — a synthetic response is
+        returned with estimated tokens so routing + cost can be exercised
+        offline.
         """
+        # 1) resolve the model + routing reason
+        if model:
+            chosen, reason = resolve_model_name(model), f"explicit:{resolve_model_name(model)}"
+        else:
+            chosen, reason = self.policy.resolve(task_type)
+
+        # 2) dry-run short-circuit (no network, no credits)
+        use_dry = self._dry_run if dry_run is None else dry_run
+        if use_dry:
+            return self._dry_run_response(messages, system, chosen, reason, task_type)
+
         chain = self._ordered_chain()
         last_error: Exception | None = None
 
@@ -261,7 +363,14 @@ class ProviderRouter:
             try:
                 # Only pass tools if the provider supports them.
                 effective_tools = tools if provider.supports_tools() else None
-                response = await provider.chat(messages, effective_tools, system)
+                try:
+                    response = await provider.chat(
+                        messages, effective_tools, system,
+                        model=chosen, task_type=task_type,
+                    )
+                except TypeError:
+                    # provider not yet updated for the per-call model knob
+                    response = await provider.chat(messages, effective_tools, system)
 
                 latency = time.monotonic() - start
                 stats.total_requests += 1
@@ -272,6 +381,9 @@ class ProviderRouter:
 
                 # Tag the response with the provider that actually served it.
                 response.provider = name
+                response.task_type = task_type or ""
+                response.routing_reason = reason
+                self._record_call(response, name, chosen, reason, task_type, latency)
                 return response
 
             except Exception as exc:
@@ -291,6 +403,67 @@ class ProviderRouter:
         raise ConnectionError(
             f"All providers in the fallback chain failed.  "
             f"Last error: {last_error}"
+        )
+
+    # ------------------------------------------------------------------
+    # Telemetry helpers
+    # ------------------------------------------------------------------
+
+    def _record_call(self, response: ProviderResponse, provider_name: str,
+                     model: str, reason: str, task_type: str | None,
+                     latency: float) -> None:
+        """Record one live call's cost to the in-memory ledger + best-effort DB."""
+        try:
+            cost = estimate_cost_micros(
+                response.model or model,
+                response.input_tokens, response.output_tokens,
+                getattr(response, "cached_read_tokens", 0),
+                getattr(response, "cache_write_tokens", 0),
+            )
+        except Exception:  # noqa: BLE001
+            cost = 0
+        self.call_log.append(CallRecord(
+            task_type=task_type or "", model=response.model or model,
+            routing_reason=reason, input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens, cost_micros=cost, dry_run=False,
+        ))
+        # Best-effort Postgres ledger (no-op without psycopg2).
+        try:
+            log_llm_call(
+                provider=provider_name, model=response.model or model,
+                input_tokens=response.input_tokens,
+                output_tokens=response.output_tokens,
+                cached_tokens=getattr(response, "cached_read_tokens", 0),
+                cache_write_tokens=getattr(response, "cache_write_tokens", 0),
+                latency_ms=int(latency * 1000), task_type=task_type,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _dry_run_response(self, messages: list[dict[str, Any]], system: str | None,
+                          model: str, reason: str,
+                          task_type: str | None) -> ProviderResponse:
+        """Synthetic response for offline routing/cost verification (no network)."""
+        text = (system or "")
+        for m in messages or []:
+            c = m.get("content", "")
+            text += c if isinstance(c, str) else str(c)
+        in_tokens = max(1, len(text) // 4)
+        out_tokens = 200  # nominal generation
+        try:
+            cost = estimate_cost_micros(model, in_tokens, out_tokens)
+        except Exception:  # noqa: BLE001
+            cost = 0
+        self.call_log.append(CallRecord(
+            task_type=task_type or "", model=model, routing_reason=reason,
+            input_tokens=in_tokens, output_tokens=out_tokens,
+            cost_micros=cost, dry_run=True,
+        ))
+        return ProviderResponse(
+            content=f"[dry-run:{model}] {reason}",
+            tool_calls=None, input_tokens=in_tokens, output_tokens=out_tokens,
+            model=model, provider="dry-run", finish_reason="end_turn",
+            raw={"dry_run": True}, task_type=task_type or "", routing_reason=reason,
         )
 
     async def stream_chat(

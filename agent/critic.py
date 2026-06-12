@@ -106,6 +106,7 @@ async def critique(
         response = await router.chat(
             messages=[{"role": "user", "content": json.dumps(summary, indent=2, default=str)}],
             system=_SYSTEM_PROMPT,
+            task_type="critic",
         )
         content = getattr(response, "content", str(response))
         parsed = _safe_parse(content)

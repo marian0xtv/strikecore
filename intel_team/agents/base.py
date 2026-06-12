@@ -117,26 +117,32 @@ class BaseSpecialist(abc.ABC):
         *,
         tools: list[dict[str, Any]] | None = None,
     ) -> str:
-        """Single LLM dispatch surface — anchored to the existing ProviderRouter.
+        """Single LLM dispatch surface — anchored to the cost-aware ProviderRouter.
 
-        ``core.provider_router.ProviderRouter.chat()`` accepts only
-        ``messages``, ``tools``, and ``system`` — the model, max_tokens and
-        temperature are sourced from the active provider's settings. Per-agent
-        tuning (``self.config.max_tokens``, ``temperature``, ``model_override``)
-        is reserved for a future iteration when the router grows per-call
-        knobs; today the values are advisory for budgeting / documentation.
+        Passes a ``task_type`` so the router (GR3) picks the right-cost model for
+        this specialist: extraction specialists (socint/webint/geoint) route to
+        Haiku, the audit agent (hypothesis generation) to Opus, and the analyst
+        (ACH + final narrative) to Fable under the dossier "lethality" profile.
 
-        Prompt caching: the underlying ``providers.anthropic_provider`` enables
-        Anthropic prompt caching when the system prompt is large enough; the
-        intel-team prompts are large markdown files specifically designed to
-        benefit from that cache.
+        Prompt caching: ``providers.anthropic_provider`` enables Anthropic prompt
+        caching when the system prompt is large enough; the intel-team prompts
+        are large markdown files designed to benefit from that cache.
         """
         system = self.system_prompt
         if system_extra:
             system = f"{system}\n\n{system_extra}"
 
+        # task_type drives cost-aware routing (e.g. 'specialist:analyst')
+        domain = getattr(self.config, "domain", None)
+        domain_val = getattr(domain, "value", domain)
+        task_type = getattr(self.config, "task_type", "") or f"specialist:{domain_val}"
+
         messages = [{"role": "user", "content": user_message}]
-        response = await self.router.chat(messages=messages, tools=tools, system=system)
+        try:
+            response = await self.router.chat(
+                messages=messages, tools=tools, system=system, task_type=task_type)
+        except TypeError:  # router without the per-call knob (e.g. a test stub)
+            response = await self.router.chat(messages=messages, tools=tools, system=system)
         # ProviderRouter returns a ProviderResponse with .content
         return getattr(response, "content", str(response))
 

@@ -26,6 +26,12 @@ class ProviderResponse:
     provider: str
     finish_reason: str
     raw: dict[str, Any]
+    # cost-aware-router fields (cache tokens otherwise only inside raw["usage"])
+    cached_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    # set by the router so telemetry/audit can attribute the call
+    task_type: str = ""
+    routing_reason: str = ""
 
 
 class BaseProvider(ABC):
@@ -42,8 +48,16 @@ class BaseProvider(ABC):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         system: str | None = None,
+        *,
+        model: str | None = None,
+        task_type: str | None = None,
     ) -> ProviderResponse:
-        """Send a chat completion request and return a normalized response."""
+        """Send a chat completion request and return a normalized response.
+
+        ``model`` overrides the provider's configured model for this call only
+        (used by the cost-aware router); ``task_type`` is a routing/telemetry
+        hint. Providers may ignore both and still satisfy the contract.
+        """
         ...
 
     @abstractmethod

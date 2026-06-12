@@ -200,6 +200,7 @@ class Agent:
                         messages=self.session.messages,
                         tools=tool_schemas,
                         system=system,
+                        task_type="agent_step",
                     )
                 else:
                     response = await self._json_fallback_chat(
@@ -260,6 +261,7 @@ class Agent:
                 messages=self.session.messages,
                 tools=None,  # no native tools
                 system=augmented_system,
+                task_type="agent_step",
             )
             last_response = response
 
