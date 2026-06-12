@@ -1,0 +1,169 @@
+#!/usr/bin/env bash
+# post-receive — StrikeCore git-push deploy hook (Integration Contract §10, GR2).
+#
+# This is the ONE sanctioned artifact installed directly on atlas (.git/hooks/),
+# because hooks are not part of the pushed tree (GR2). Everything else deploys
+# Git-only (GR1).
+#
+# On a push to DEPLOY_BRANCH (after `receive.denyCurrentBranch=updateInstead`
+# updates the work tree), it:
+#   * finds tool dirs changed in oldrev..newrev under TOOLS_DIR;
+#   * for each, reads tool.manifest.json (python3 — no jq dependency);
+#   * if gate_approved=true: runs `--selftest --json` (NO real targets) and,
+#     on pass, registers via REGISTRY_CMD;
+#   * if gate_approved!=true: FLAGS for manual gate and NEVER runs/registers it
+#     (enforces hard-stop H3);
+#   * serializes concurrent pushes with flock;
+#   * appends an audit line per action (append-only);
+#   * reports per-tool status back to the pushing client.
+#
+# Exit status is always 0 (a hook failure must not reject an already-accepted
+# push); problems are reported to the client and the audit log.
+
+set -uo pipefail
+
+DEPLOY_BRANCH="${SC_DEPLOY_BRANCH:-main}"
+TOOLS_DIR="${SC_TOOLS_DIR:-tools}"
+ZERO="0000000000000000000000000000000000000000"
+EMPTY_TREE="4b825dc642cb6eb9a060e54bf8d69288fbee4904"  # git's well-known empty tree
+
+# --- resolve work tree (post updateInstead) and registry CMD ----------------
+GIT_DIR_ABS="$(git rev-parse --git-dir 2>/dev/null || echo "$PWD")"
+GIT_DIR_ABS="$(cd "$GIT_DIR_ABS" && pwd)"
+WORK_TREE="$(cd "$GIT_DIR_ABS/.." && pwd)"
+unset GIT_DIR
+cd "$WORK_TREE" || { echo "post-receive: cannot cd to work tree" >&2; exit 0; }
+
+REGISTRY_CMD="${SC_REGISTRY_CMD:-$WORK_TREE/bin/sc-registry.py}"
+AUDIT_LOG="${SC_HOOK_AUDIT:-$HOME/.strikecore/audit/hook-deploy.log}"
+LOCK="${SC_HOOK_LOCK:-$HOME/.strikecore/registry/post-receive.lock}"
+mkdir -p "$(dirname "$AUDIT_LOG")" "$(dirname "$LOCK")" 2>/dev/null || true
+
+now() { date -u +%Y-%m-%dT%H:%M:%SZ; }
+audit() { echo "$(now) $*" >>"$AUDIT_LOG" 2>/dev/null || true; }
+say()   { echo "[strikecore-deploy] $*"; }
+
+# Read one field from a manifest using python3 (no jq).
+manifest_field() {  # $1=manifest path  $2=dotted key
+    python3 - "$1" "$2" <<'PY' 2>/dev/null
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    cur = d
+    for k in sys.argv[2].split("."):
+        cur = cur[k]
+    print("true" if cur is True else "false" if cur is False else cur)
+except Exception:
+    sys.exit(1)
+PY
+}
+
+process_ref() {
+    local oldrev="$1" newrev="$2" refname="$3"
+
+    if [ "$refname" != "refs/heads/$DEPLOY_BRANCH" ]; then
+        return 0  # not the deploy branch
+    fi
+    if [ "$newrev" = "$ZERO" ]; then
+        say "branch $DEPLOY_BRANCH deleted — nothing to deploy."
+        audit "branch_deleted $refname"
+        return 0
+    fi
+
+    local base="$oldrev"
+    if [ "$oldrev" = "$ZERO" ]; then
+        base="$EMPTY_TREE"  # new branch: diff against empty tree
+    fi
+
+    local changed
+    changed="$(git diff --name-only "$base" "$newrev" -- "$TOOLS_DIR" 2>/dev/null)"
+    if [ -z "$changed" ]; then
+        say "no tool changes under $TOOLS_DIR/ in this push."
+        audit "no_tool_changes $refname $oldrev..$newrev"
+        return 0
+    fi
+
+    # Derive unique tool dirs (tools/<name>), skipping lib and _* internals.
+    local tooldirs
+    tooldirs="$(printf '%s\n' "$changed" \
+        | awk -F/ 'NF>=2 && $1=="'"$TOOLS_DIR"'" {print $1"/"$2}' \
+        | sort -u \
+        | grep -vE "/(lib|_)" || true)"
+
+    if [ -z "$tooldirs" ]; then
+        say "changes under $TOOLS_DIR/ touched only shared/template files — nothing to register."
+        return 0
+    fi
+
+    if [ ! -f "$REGISTRY_CMD" ]; then
+        say "WARNING: REGISTRY_CMD not found at $REGISTRY_CMD — cannot register; tools reported only."
+        audit "registry_cmd_missing $REGISTRY_CMD"
+    fi
+
+    local dir name manifest gate entry selftest_rc
+    while IFS= read -r dir; do
+        [ -z "$dir" ] && continue
+        manifest="$WORK_TREE/$dir/tool.manifest.json"
+        if [ ! -f "$manifest" ]; then
+            say "  $dir: removed or no manifest — skipping."
+            audit "skip_no_manifest $dir"
+            continue
+        fi
+        name="$(manifest_field "$manifest" name || echo "$dir")"
+        gate="$(manifest_field "$manifest" gate_approved || echo "false")"
+
+        if [ "$gate" != "true" ]; then
+            say "  $name: gate_approved=false → FLAGGED for manual sandbox gate (H3). NOT run, NOT registered."
+            audit "flagged_manual_gate $name $dir"
+            continue
+        fi
+
+        # gate_approved=true → run the offline self-test (no real targets)
+        entry="$(manifest_field "$manifest" entrypoint || echo "")"
+        if [ -z "$entry" ] || [ ! -f "$WORK_TREE/$dir/$entry" ]; then
+            say "  $name: entrypoint missing → cannot self-test; skipping."
+            audit "skip_no_entrypoint $name $dir"
+            continue
+        fi
+
+        case "$entry" in
+            *.py) python3 "$WORK_TREE/$dir/$entry" --selftest --json >/dev/null 2>&1 ;;
+            *)    "$WORK_TREE/$dir/$entry" --selftest --json >/dev/null 2>&1 ;;
+        esac
+        selftest_rc=$?
+
+        if [ "$selftest_rc" -ne 0 ]; then
+            say "  $name: SELF-TEST FAILED (rc=$selftest_rc) → NOT registered."
+            audit "selftest_failed $name rc=$selftest_rc"
+            continue
+        fi
+
+        if [ -f "$REGISTRY_CMD" ]; then
+            if python3 "$REGISTRY_CMD" register "$WORK_TREE/$dir" >/dev/null 2>&1; then
+                say "  $name: self-test PASSED → REGISTERED."
+                audit "registered $name $dir"
+            else
+                say "  $name: self-test PASSED but registry register FAILED."
+                audit "register_failed $name $dir"
+            fi
+        else
+            say "  $name: self-test PASSED (registry unavailable; not persisted)."
+        fi
+    done <<< "$tooldirs"
+}
+
+# --- main: serialize with flock, process each pushed ref --------------------
+exec 9>"$LOCK"
+if command -v flock >/dev/null 2>&1; then
+    flock 9 || true
+fi
+
+say "deploy hook on $(hostname) — branch '$DEPLOY_BRANCH', tools '$TOOLS_DIR'"
+audit "hook_start branch=$DEPLOY_BRANCH"
+
+while read -r oldrev newrev refname; do
+    process_ref "$oldrev" "$newrev" "$refname"
+done
+
+audit "hook_end"
+exit 0
