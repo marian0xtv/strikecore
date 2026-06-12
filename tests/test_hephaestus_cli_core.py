@@ -50,6 +50,7 @@ def test_list_and_get_run(tmp_path, monkeypatch):
     got = cli_core.list_runs()
     assert got and got[0]["run_id"] == "heph-test-1"
     assert cli_core.get_run("heph-test-1")["status"] == "completed"
+    assert cli_core.get_run(None)["run_id"] == "heph-test-1"
     assert cli_core.get_run("nope") is None
 
 
@@ -67,3 +68,5 @@ def test_approve_gate(tmp_path, monkeypatch):
     assert res["ok"] is True and res["remaining"] == 0
     miss = cli_core.approve_gate("heph-test-1", "H3")
     assert miss["ok"] is False and "no pending" in miss["error"].lower()
+    gone = cli_core.approve_gate("does-not-exist", "H1")
+    assert gone["ok"] is False and "no such run" in gone["error"].lower()

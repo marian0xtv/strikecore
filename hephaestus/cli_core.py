@@ -119,10 +119,14 @@ def list_runs() -> list[dict]:
     return out
 
 
+def run_record_path(run_id: str) -> Path:
+    return run_record.RUNS_DIR / f"{run_id}.json"
+
+
 def get_run(run_id: str | None) -> dict | None:
     """Specific run by id, or the most recent if run_id is None."""
     if run_id:
-        path = run_record.RUNS_DIR / f"{run_id}.json"
+        path = run_record_path(run_id)
         if not path.exists():
             return None
         return json.loads(path.read_text())
@@ -130,13 +134,9 @@ def get_run(run_id: str | None) -> dict | None:
     return json.loads(runs[0].read_text()) if runs else None
 
 
-def run_record_path(run_id: str) -> Path:
-    return run_record.RUNS_DIR / f"{run_id}.json"
-
-
 def approve_gate(run_id: str, gate: str) -> dict[str, Any]:
     """Clear a pending H1/H3 gate. Returns {ok, error, remaining}."""
-    path = run_record.RUNS_DIR / f"{run_id}.json"
+    path = run_record_path(run_id)
     if not path.exists():
         return {"ok": False, "error": f"no such run: {run_id}", "remaining": 0}
     rec = json.loads(path.read_text())
