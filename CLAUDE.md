@@ -327,3 +327,39 @@ isolation is allowlist + pattern + process-group timeout, **not** an OS jail.
    `python3 bin/sc-registry.py validate tools/<name>` passes.
 5. Conventional commit + push (GR1). Operator runs the gate (H1/H3), flips
    `gate_approved=true`, re-pushes → hook registers it.
+
+---
+
+## 14. Platform LLM Router & Native Hephaestus (NEW 2026-06-12)
+
+### GR3 — the cost-aware LLM router is MANDATORY for all LLM calls
+
+Every Claude API call in StrikeCore — every agent, every mode, Hephaestus and
+**DOSSIER mode** included — goes through `core/provider_router.py:ProviderRouter.chat()`,
+which is now **cost-aware**: it picks the cheapest model meeting the quality bar
+for the call's `task_type`. **No hardcoded/direct model calls remain.** Callers
+MUST pass a `task_type`. Never hardcode API keys.
+
+- Policy + profiles: `governance/model_router.py` (`ModelPolicy`, profiles
+  `default`/`hephaestus`/`dossier`, dossier **lethality** economy|balanced|max).
+- Pricing: `governance/limits.py` (`claude-fable-5`/`claude-opus-4-8`/`claude-haiku-4-5`).
+- Selectable at runtime via **`/model`** (pin/auto/profile/lethality/per-step
+  override/cost), persisted to `[ai.model_policy]` in config.
+- Base routing: bulk (tool calls / extraction / normalization / bulk collection)
+  → Haiku; reasoning/planning → Opus; heaviest reasoning (deep-research
+  synthesis, novel design, complex gap analysis, ACH + final dossier narrative)
+  → Fable. Dossier "lethality" biases analysis steps upward; bulk stays Haiku.
+
+### Hephaestus is a native StrikeCore agent
+
+`hephaestus/` (Python, **no Claude Code dependency at runtime**) is the toolsmith:
+GitHub discovery → research → gap analysis → decide, consuming the router
+(`hephaestus` profile). It emits a run record validating against
+`schema/hephaestus.run_record.schema.json`, and PAUSES on H1/H3 with approval
+requests surfaced in the CLI (`bin/hephaestus.py`) and dashboard
+(`/api/hephaestus/runs`, the Hephaestus page). The dev-time Claude Code subagent
+at `.claude/agents/hephaestus.md` remains a convenience, not the runtime path.
+
+GR1 (Git-only deploy) and GR2 (the `post-receive` hook is the only artifact
+installed directly on atlas) are unchanged. Full change log:
+**`docs/HEPHAESTUS_CHANGES.md`**.
