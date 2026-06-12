@@ -1,0 +1,183 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://strikecore.local/schema/tool.manifest.schema.json",
+  "title": "StrikeCore Tool Manifest",
+  "description": "Machine-readable descriptor for an OSINT tool integrated under the StrikeCore Integration Contract. One per tool, at tools/<name>/tool.manifest.json.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "manifest_version",
+    "name",
+    "version",
+    "category",
+    "description",
+    "provenance",
+    "license",
+    "reliability",
+    "confidence",
+    "maintainer",
+    "added_by",
+    "added_at",
+    "runtime",
+    "deps",
+    "install_method",
+    "entrypoint",
+    "capabilities",
+    "io",
+    "safety",
+    "gate_approved"
+  ],
+  "properties": {
+    "manifest_version": {
+      "type": "integer",
+      "description": "Schema/manifest format version.",
+      "enum": [1]
+    },
+    "name": {
+      "type": "string",
+      "description": "Unique registry key; also the wrapper binary name (sc-<name> by convention).",
+      "pattern": "^[a-z0-9][a-z0-9_-]{1,63}$"
+    },
+    "version": {
+      "type": "string",
+      "description": "Tool semantic version.",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "category": {
+      "type": "string",
+      "description": "Primary OSINT discipline taxonomy.",
+      "enum": [
+        "domain", "network", "person", "social", "geoint", "image",
+        "document", "breach", "infrastructure", "email", "phone",
+        "username", "threatint", "cloud", "code-repo", "crypto",
+        "dark-web", "italian-specific", "misc"
+      ]
+    },
+    "description": {
+      "type": "string",
+      "minLength": 8,
+      "maxLength": 500
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Where the upstream code came from. For first-party tools, upstream_url is the StrikeCore repo and pinned_commit may be 'first-party'.",
+      "additionalProperties": false,
+      "required": ["upstream_url", "pinned_commit"],
+      "properties": {
+        "upstream_url": { "type": "string", "minLength": 4 },
+        "pinned_commit": { "type": "string", "minLength": 3 },
+        "first_party": { "type": "boolean", "default": false }
+      }
+    },
+    "license": {
+      "type": "string",
+      "description": "SPDX identifier or 'proprietary'/'unknown'.",
+      "minLength": 2
+    },
+    "reliability": {
+      "type": "string",
+      "description": "NATO Admiralty Code source reliability (A=completely reliable .. F=cannot be judged).",
+      "enum": ["A", "B", "C", "D", "E", "F"]
+    },
+    "confidence": {
+      "type": "integer",
+      "description": "NATO Admiralty Code information credibility (1=confirmed .. 6=cannot be judged).",
+      "minimum": 1,
+      "maximum": 6
+    },
+    "maintainer": {
+      "type": "string",
+      "description": "Person/role responsible for this integration."
+    },
+    "added_by": {
+      "type": "string",
+      "description": "Who integrated the tool (operator, subagent name e.g. hephaestus)."
+    },
+    "added_at": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp of integration.",
+      "format": "date-time"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "Execution runtime.",
+      "enum": ["python3", "bash", "node", "go", "binary", "other"]
+    },
+    "deps": {
+      "type": "array",
+      "description": "Pinned dependencies (e.g. 'requests==2.32.0'). Empty if none.",
+      "items": { "type": "string" }
+    },
+    "install_method": {
+      "type": "string",
+      "description": "How install.sh provisions the tool.",
+      "enum": ["git-clone-venv", "pip", "go-install", "apt", "symlink-only", "none"]
+    },
+    "entrypoint": {
+      "type": "string",
+      "description": "Relative path (within the tool dir) to the executable wrapper, e.g. sc-cf-validate.py."
+    },
+    "capabilities": {
+      "type": "array",
+      "description": "Machine-readable capability tags used for agent routing (e.g. 'validate:codice-fiscale', 'lookup:email-breach').",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9][a-z0-9:_-]{1,63}$"
+      }
+    },
+    "io": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input_schema", "output_envelope"],
+      "properties": {
+        "input_schema": {
+          "type": "string",
+          "description": "Ref to an input JSON Schema, or 'cli-args' if the CLI flags are the input contract."
+        },
+        "output_envelope": {
+          "type": "string",
+          "description": "Ref to the I/O envelope schema this tool emits.",
+          "const": "schema/io.envelope.schema.json"
+        }
+      }
+    },
+    "safety": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "network_egress",
+        "rate_limits",
+        "touches_real_targets",
+        "tos_notes",
+        "sandbox_required"
+      ],
+      "properties": {
+        "network_egress": {
+          "type": "boolean",
+          "description": "True if the tool makes any outbound network connection."
+        },
+        "rate_limits": {
+          "type": "string",
+          "description": "Free-text rate-limit notes, or 'none'."
+        },
+        "touches_real_targets": {
+          "type": "boolean",
+          "description": "True if running the tool contacts/affects a real third-party target (vs purely local/offline computation)."
+        },
+        "tos_notes": {
+          "type": "string",
+          "description": "Terms-of-service / legal-scope notes, or 'none'."
+        },
+        "sandbox_required": {
+          "type": "boolean",
+          "description": "True if the tool must be human-gated before any real-target run (H1/H3)."
+        }
+      }
+    },
+    "gate_approved": {
+      "type": "boolean",
+      "description": "Set to true ONLY after the manual sandbox gate (H3). The post-receive hook auto-selftests/registers only gate_approved=true tools; others are flagged for manual review and never auto-run."
+    }
+  }
+}

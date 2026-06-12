@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://strikecore.local/schema/io.envelope.schema.json",
+  "title": "StrikeCore Tool I/O Envelope",
+  "description": "Uniform JSON envelope emitted on stdout by every contract-conformant tool. Carries per-result NATO Admiralty reliability+confidence so scoring propagates end-to-end into the intel pipeline.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "tool",
+    "tool_version",
+    "timestamp",
+    "input",
+    "results",
+    "errors",
+    "audit"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "enum": [1]
+    },
+    "tool": {
+      "type": "string",
+      "description": "Tool name (matches manifest.name)."
+    },
+    "tool_version": {
+      "type": "string",
+      "description": "Tool version (matches manifest.version)."
+    },
+    "timestamp": {
+      "type": "string",
+      "description": "UTC ISO-8601 timestamp of this run.",
+      "format": "date-time"
+    },
+    "input": {
+      "type": "object",
+      "description": "Echo of the normalized input the tool acted on."
+    },
+    "results": {
+      "type": "array",
+      "description": "Zero or more findings. Each carries its OWN Admiralty reliability+confidence and sources, so the quality gate and analyst can score without re-deriving.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["type", "value", "reliability", "confidence", "sources"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Finding type (e.g. 'email', 'social_profile', 'validation', 'address'). MUST NOT be a phone type from a non-phone tool (CLAUDE.md §3.4)."
+          },
+          "value": {
+            "description": "The finding payload (string or object)."
+          },
+          "reliability": {
+            "type": "string",
+            "enum": ["A", "B", "C", "D", "E", "F"],
+            "description": "NATO Admiralty source reliability for THIS result."
+          },
+          "confidence": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 6,
+            "description": "NATO Admiralty information credibility for THIS result."
+          },
+          "sources": {
+            "type": "array",
+            "description": "Provenance URLs/identifiers backing this result. Empty array allowed only for deterministic algorithmic results (e.g. checksum validation).",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "errors": {
+      "type": "array",
+      "description": "Structured error records; empty on full success.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "message": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "selftest", "duration_ms"],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "description": "Unique id for this invocation (for audit correlation)."
+        },
+        "selftest": {
+          "type": "boolean",
+          "description": "True if this envelope was produced by --selftest (no real targets touched)."
+        },
+        "duration_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "target": {
+          "type": "string",
+          "description": "Optional: the real-world target this run pertained to."
+        }
+      }
+    }
+  }
+}
