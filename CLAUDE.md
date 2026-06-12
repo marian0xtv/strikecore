@@ -256,3 +256,73 @@ PIR → pir_router → specialists (parallel) → quality_gate → audit → ana
 - Propose the **next pivot** at the end of every finding block.
 - Italian for analyst-facing narrative when the operator writes in Italian; tool output stays in original language.
 - Tool incantations minimal in chat — full commands live in audit, summaries in reports.
+
+---
+
+## 13. Hephaestus & the Integration Contract (NEW 2026-06-12)
+
+**Hephaestus** (`.claude/agents/hephaestus.md`) is StrikeCore's **toolsmith** — a
+native Claude Code subagent that discovers, researches, builds, adapts, and
+integrates OSINT tooling. It sits in the **Collection** phase of the
+intelligence cycle (§2.1): it ensures every PIR can be answered because the right
+vetted tool exists and is registered. Default model `claude-opus-4-8`;
+`claude-fable-5` for heavy reasoning (research, design, gap analysis) — GR3.
+
+### The Integration Contract is mandatory
+
+Every new tool (written, forked, or wrapped from upstream) MUST conform to
+**`docs/INTEGRATION_CONTRACT.md`**. It formalizes the existing daprofiler pattern
+(`bin/sc-daprofiler.py` + `bin/install-daprofiler.sh`) — it does not compete with
+it. Key artifacts:
+
+| Artifact | Path |
+|---|---|
+| Human contract | `docs/INTEGRATION_CONTRACT.md` |
+| Manifest schema | `schema/tool.manifest.schema.json` |
+| I/O envelope schema | `schema/io.envelope.schema.json` |
+| Shared helper lib | `tools/lib/sctool.py` |
+| Reference tool | `tools/cf-validate/` (offline Codice Fiscale validator) |
+| Copy-me template | `tools/_template/` |
+| Registry CLI | `bin/sc-registry.py` (`validate/register/deregister/list/index`) |
+| Deploy hook | `post-receive` |
+
+Each tool ships a `tool.manifest.json` (provenance + Admiralty reliability +
+`gate_approved`), a uniform CLI (`--config/--selftest/--json`, exit codes
+0/1/2/3) that emits the I/O envelope with **per-result Admiralty scoring** (so
+§2.4 confidence propagates end-to-end), an `install.sh`, tests, and a README.
+
+### GR1 — Git-only deployment
+
+All changes are made in the **local clone**, committed (conventional commits:
+`feat(tool)/fix/chore(registry)/docs`), and pushed to atlas
+(`atlas@10.0.0.1:/home/atlas/argus-intelligence/strikecore`, which has
+`receive.denyCurrentBranch=updateInstead`). **Never** edit, create, or install
+project files directly on atlas over SSH. On push, the `post-receive` hook
+self-tests `gate_approved=true` tools and registers them; un-gated tools are
+flagged for the manual sandbox gate (H3) and never auto-run.
+
+### GR2 — Hook exception
+
+Git hooks live in `.git/hooks/` and are NOT part of the pushed tree, so the
+`post-receive` hook is the **single** sanctioned artifact installed directly on
+atlas. This is the only exception to GR1.
+
+### Sandbox gate (H1/H3) — see also §2.2, §3, §7
+
+Untrusted upstream code ships `gate_approved=false` and is human-gated before any
+real-target run. The gate reuses StrikeCore's existing execution constraints
+(`core/executor.py` allowlist + `core/proxy_manager.py` egress) plus the offline
+`--selftest` — not a parallel mechanism (GR4). Honest scope: StrikeCore's
+isolation is allowlist + pattern + process-group timeout, **not** an OS jail.
+
+### Extending the toolset — to add a new tool
+
+1. Copy `tools/_template/` → `tools/<name>/` (or start from `tools/cf-validate/`).
+2. Implement `run()` + an offline `_selftest_check()`; emit the envelope via
+   `tools/lib/sctool.py` with honest Admiralty scoring.
+3. Fill `tool.manifest.json` (pin upstream commit; `gate_approved=false` for
+   untrusted code).
+4. `python3 tools/<name>/sc-<name>.py --selftest --json` exits 0;
+   `python3 bin/sc-registry.py validate tools/<name>` passes.
+5. Conventional commit + push (GR1). Operator runs the gate (H1/H3), flips
+   `gate_approved=true`, re-pushes → hook registers it.
