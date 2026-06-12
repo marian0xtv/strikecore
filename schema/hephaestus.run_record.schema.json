@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://strikecore.local/schema/hephaestus.run_record.schema.json",
+  "title": "Hephaestus Run Record",
+  "description": "One R&D run of the native Hephaestus agent. The routing/model_usage/totals sub-structures are the canonical cost-telemetry shape reused by other StrikeCore modes (e.g. dossier) so the dashboard can render any mode's cost uniformly.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_id", "started_at", "finished_at", "status",
+    "params", "candidates", "research", "gap_analysis", "decisions",
+    "git_actions", "pending_approvals", "routing", "model_usage", "totals"
+  ],
+  "properties": {
+    "schema_version": { "type": "integer", "enum": [1] },
+    "run_id": { "type": "string" },
+    "started_at": { "type": "string" },
+    "finished_at": { "type": "string" },
+    "status": { "type": "string", "enum": ["completed", "paused", "error"] },
+    "params": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["focus_category", "depth", "dry_run", "profile", "lethality"],
+      "properties": {
+        "focus_category": { "type": "string" },
+        "depth": { "type": "integer", "minimum": 1 },
+        "dry_run": { "type": "boolean" },
+        "profile": { "type": "string" },
+        "lethality": { "type": "string" }
+      }
+    },
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "url", "reliability", "confidence"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "stars": { "type": "integer" },
+          "language": { "type": "string" },
+          "pushed_at": { "type": "string" },
+          "reliability": { "type": "string", "enum": ["A", "B", "C", "D", "E", "F"] },
+          "confidence": { "type": "integer", "minimum": 1, "maximum": 6 },
+          "signal": { "type": "string" }
+        }
+      }
+    },
+    "research": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["claim", "kind"],
+        "properties": {
+          "claim": { "type": "string" },
+          "source": { "type": "string" },
+          "kind": { "type": "string", "enum": ["fact", "recommendation"] }
+        }
+      }
+    },
+    "gap_analysis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["covered", "gaps"],
+      "properties": {
+        "covered": { "type": "array", "items": { "type": "string" } },
+        "gaps": { "type": "array", "items": { "type": "string" } },
+        "target_gap": { "type": "string" }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["candidate", "action", "rationale"],
+        "properties": {
+          "candidate": { "type": "string" },
+          "action": { "type": "string", "enum": ["integrate", "fork", "write", "skip"] },
+          "rationale": { "type": "string" }
+        }
+      }
+    },
+    "git_actions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["action"],
+        "properties": {
+          "action": { "type": "string" },
+          "detail": { "type": "string" }
+        }
+      }
+    },
+    "pending_approvals": {
+      "type": "array",
+      "description": "H1/H3 gates that paused the run and need operator approval.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "reason"],
+        "properties": {
+          "gate": { "type": "string", "enum": ["H1", "H3"] },
+          "reason": { "type": "string" },
+          "candidate": { "type": "string" }
+        }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "policy", "lethality"],
+      "properties": {
+        "profile": { "type": "string" },
+        "policy": { "type": "object" },
+        "lethality": { "type": "string" }
+      }
+    },
+    "model_usage": {
+      "type": "array",
+      "description": "Per task_type model usage + estimated cost (the per-step model badges).",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task_type", "model", "calls", "cost_micros"],
+        "properties": {
+          "task_type": { "type": "string" },
+          "model": { "type": "string" },
+          "reason": { "type": "string" },
+          "calls": { "type": "integer", "minimum": 0 },
+          "input_tokens": { "type": "integer", "minimum": 0 },
+          "output_tokens": { "type": "integer", "minimum": 0 },
+          "cost_micros": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "totals": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calls", "cost_usd_micros"],
+      "properties": {
+        "calls": { "type": "integer", "minimum": 0 },
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "cost_usd_micros": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
