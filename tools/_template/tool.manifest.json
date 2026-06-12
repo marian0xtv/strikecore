@@ -1,0 +1,37 @@
+{
+  "manifest_version": 1,
+  "name": "__TOOLNAME__",
+  "version": "0.1.0",
+  "category": "misc",
+  "description": "__ONE_LINE_DESCRIPTION__ (replace; >= 8 chars).",
+  "provenance": {
+    "upstream_url": "https://github.com/__OWNER__/__REPO__",
+    "pinned_commit": "__GIT_SHA__",
+    "first_party": false
+  },
+  "license": "__SPDX_OR_unknown__",
+  "reliability": "F",
+  "confidence": 6,
+  "maintainer": "__YOU__",
+  "added_by": "hephaestus",
+  "added_at": "1970-01-01T00:00:00+00:00",
+  "runtime": "python3",
+  "deps": [],
+  "install_method": "git-clone-venv",
+  "entrypoint": "sc-__TOOLNAME__.py",
+  "capabilities": [
+    "__capability:tag__"
+  ],
+  "io": {
+    "input_schema": "cli-args",
+    "output_envelope": "schema/io.envelope.schema.json"
+  },
+  "safety": {
+    "network_egress": true,
+    "rate_limits": "__describe_or_none__",
+    "touches_real_targets": true,
+    "tos_notes": "__upstream_tos_notes__",
+    "sandbox_required": true
+  },
+  "gate_approved": false
+}
