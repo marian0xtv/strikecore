@@ -1,0 +1,39 @@
+{
+  "manifest_version": 1,
+  "name": "cf-validate",
+  "version": "1.0.0",
+  "category": "italian-specific",
+  "description": "Offline Italian Codice Fiscale validator: checks the control character and decodes birth metadata (year/month/day/gender), tolerating omocodia. Deterministic, no network.",
+  "provenance": {
+    "upstream_url": "https://10.0.0.1/home/atlas/argus-intelligence/strikecore",
+    "pinned_commit": "first-party",
+    "first_party": true
+  },
+  "license": "proprietary",
+  "reliability": "A",
+  "confidence": 1,
+  "maintainer": "atlas",
+  "added_by": "hephaestus",
+  "added_at": "2026-06-12T00:00:00+00:00",
+  "runtime": "python3",
+  "deps": [],
+  "install_method": "symlink-only",
+  "entrypoint": "sc-cf-validate.py",
+  "capabilities": [
+    "validate:codice-fiscale",
+    "decode:birth-metadata",
+    "italian:fiscal-code"
+  ],
+  "io": {
+    "input_schema": "cli-args",
+    "output_envelope": "schema/io.envelope.schema.json"
+  },
+  "safety": {
+    "network_egress": false,
+    "rate_limits": "none",
+    "touches_real_targets": false,
+    "tos_notes": "none",
+    "sandbox_required": false
+  },
+  "gate_approved": true
+}
