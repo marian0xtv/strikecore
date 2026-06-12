@@ -277,6 +277,7 @@ it. Key artifacts:
 
 | Artifact | Path |
 |---|---|
+| Usage & testing guide | `docs/HEPHAESTUS.md` (where it lives, how to invoke, manual tests) |
 | Human contract | `docs/INTEGRATION_CONTRACT.md` |
 | Manifest schema | `schema/tool.manifest.schema.json` |
 | I/O envelope schema | `schema/io.envelope.schema.json` |
