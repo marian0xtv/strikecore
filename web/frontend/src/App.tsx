@@ -9,6 +9,7 @@ import Runs from "./pages/Runs";
 import RunDetail from "./pages/RunDetail";
 import Improvements from "./pages/Improvements";
 import Cost from "./pages/Cost";
+import Hephaestus from "./pages/Hephaestus";
 import Console from "./pages/Console";
 import Settings from "./pages/Settings";
 
@@ -28,6 +29,7 @@ export default function App() {
             <Route path="/runs/:id"            element={<RunDetail />} />
             <Route path="/improvements"        element={<Improvements />} />
             <Route path="/cost"                element={<Cost />} />
+            <Route path="/hephaestus"          element={<Hephaestus />} />
             <Route path="/console"             element={<Console />} />
             <Route path="/settings"            element={<Settings />} />
             <Route path="*" element={<div className="text-muted">404 — not found</div>} />

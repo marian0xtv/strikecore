@@ -36,6 +36,36 @@ export type TokensSummary = {
   by_model: any[]; by_day: any[]; cache_hit_rate_7d: number;
 };
 
+export type HephTool = {
+  name: string; url: string; stars?: number; language?: string;
+  reliability: string; confidence: number; signal?: string;
+};
+export type HephModelUsage = {
+  task_type: string; model: string; reason?: string; calls: number;
+  input_tokens?: number; output_tokens?: number; cost_micros: number;
+};
+export type HephRun = {
+  run_id: string; status: string; started_at: string; finished_at: string;
+  params: { focus_category: string; depth: number; dry_run: boolean;
+            profile: string; lethality: string };
+  candidates: HephTool[];
+  research: { claim: string; source?: string; kind: string }[];
+  gap_analysis: { covered: string[]; gaps: string[]; target_gap?: string };
+  decisions: { candidate: string; action: string; rationale: string }[];
+  pending_approvals: { gate: string; reason: string; candidate?: string }[];
+  routing: { profile: string; policy: any; lethality: string };
+  model_usage: HephModelUsage[];
+  totals: { calls: number; cost_usd_micros: number };
+};
+export type HephRunsResp = {
+  runs: HephRun[]; latest: HephRun | null;
+  pending: ({ run_id: string; gate: string; reason: string; candidate?: string })[];
+};
+export type TokensByMode = {
+  by_mode: { task_type: string; model: string; calls: number;
+             input_tokens?: number; output_tokens?: number; cost_micros: number }[];
+};
+
 export const fmtUsd = (micros?: number | string | null) =>
   micros == null ? "—" : "$" + (Number(micros) / 1_000_000).toFixed(4);
 

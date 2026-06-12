@@ -64,6 +64,7 @@ _ALL_COMMANDS = [
     "provider",
     "models",
     "model",
+    "/model",
     "tools",
     "processes",
     "kill",
@@ -88,6 +89,11 @@ _COMMAND_HELP: List[Tuple[str, str, str]] = [
     ("provider", "list", "List all configured providers with status"),
     ("models", "", "List available models for the active provider"),
     ("model", "switch <name>", "Switch model on active provider"),
+    ("/model", "", "Show cost-aware router policy (mode/profile/lethality/overrides)"),
+    ("/model", "fable|opus|haiku", "Pin a model globally; /model auto to re-enable routing"),
+    ("/model", "profile <name>", "Switch routing profile (default|hephaestus|dossier)"),
+    ("/model", "lethality <lvl>", "Dossier lethality (economy|balanced|max)"),
+    ("/model", "<phase> <model>", "Per-step model override; /model cost shows run cost"),
     ("tools", "", "List all security tools with install status"),
     ("processes", "", "Show background processes"),
     ("kill", "<pid>", "Kill a background process"),
@@ -489,6 +495,102 @@ class StrikeCoreShell:
         self._active_model = new_model
         self.status_bar.model = new_model
         console.print(f"[{THEME['success']}]Model switched to {new_model}[/{THEME['success']}]")
+
+    def _cmd_model_router(self, args: List[str]) -> None:
+        """/model — control the cost-aware LLM router (GR3). Persisted to config.
+
+        /model                     show active policy
+        /model <fable|opus|haiku|id>   pin a model globally
+        /model auto                re-enable cost-aware routing
+        /model profile <name>      switch routing profile (default|hephaestus|dossier)
+        /model lethality <lvl>     dossier lethality (economy|balanced|max)
+        /model <phase> <model>     per-step override (e.g. /model planner fable)
+        /model clear <phase>       remove a per-step override
+        /model cost                estimated cost of the current/last run
+        """
+        from governance.model_router import (
+            FRIENDLY_TO_ID, policy_from_settings, resolve_model_name,
+        )
+
+        def persist():
+            try:
+                self.settings.save()
+            except Exception:
+                pass
+
+        sub = args[0].lower() if args else "show"
+
+        if sub in ("show", ""):
+            p = policy_from_settings(self.settings)
+            console.print(f"[{THEME['accent']}]LLM router policy[/{THEME['accent']}]")
+            console.print(f"  mode      : {p.mode}")
+            console.print(f"  pinned    : {p.pinned_model or '-'}")
+            console.print(f"  profile   : {p.profile}")
+            console.print(f"  lethality : {p.lethality}  (dossier)")
+            console.print(f"  overrides : {p.overrides or '{}'}")
+            return
+
+        if sub == "auto":
+            self.settings.set("ai.model_policy.mode", "auto")
+            persist()
+            console.print(f"[{THEME['success']}]Router: cost-aware auto mode[/{THEME['success']}]")
+            return
+
+        if sub == "profile":
+            if len(args) < 2 or args[1] not in ("default", "hephaestus", "dossier"):
+                console.print(f"[{THEME['warning']}]Usage: /model profile <default|hephaestus|dossier>[/{THEME['warning']}]")
+                return
+            self.settings.set("ai.model_policy.profile", args[1]); persist()
+            console.print(f"[{THEME['success']}]Routing profile: {args[1]}[/{THEME['success']}]")
+            return
+
+        if sub == "lethality":
+            if len(args) < 2 or args[1] not in ("economy", "balanced", "max"):
+                console.print(f"[{THEME['warning']}]Usage: /model lethality <economy|balanced|max>[/{THEME['warning']}]")
+                return
+            self.settings.set("ai.model_policy.lethality", args[1]); persist()
+            console.print(f"[{THEME['success']}]Dossier lethality: {args[1]}[/{THEME['success']}]")
+            return
+
+        if sub == "clear":
+            if len(args) < 2:
+                console.print(f"[{THEME['warning']}]Usage: /model clear <phase>[/{THEME['warning']}]")
+                return
+            ov = dict(policy_from_settings(self.settings).overrides)
+            ov.pop(args[1], None)
+            self.settings.set("ai.model_policy.overrides", ov); persist()
+            console.print(f"[{THEME['success']}]Cleared override for {args[1]}[/{THEME['success']}]")
+            return
+
+        if sub == "cost":
+            router = getattr(getattr(self, "_nlp", None), "_router", None)
+            if router is not None and getattr(router, "call_log", None):
+                rc = router.run_cost()
+                t = rc["totals"]
+                console.print(f"[{THEME['accent']}]Run cost[/{THEME['accent']}] "
+                              f"{t['calls']} call(s)  ${t['cost_usd_micros']/1_000_000:.4f}")
+                for m, info in rc["by_model"].items():
+                    console.print(f"  {m:<18} {info['calls']:>2} call(s)  "
+                                  f"${info['cost_micros']/1_000_000:.4f}")
+            else:
+                console.print(f"[{THEME['muted']}]No active run yet — run a query, dossier, or hephaestus run first.[/{THEME['muted']}]")
+            return
+
+        # pin a model globally  (/model fable|opus|haiku|<id>)
+        if len(args) == 1:
+            mid = resolve_model_name(args[0])
+            self.settings.set("ai.model_policy.mode", "pinned")
+            self.settings.set("ai.model_policy.pinned_model", mid)
+            persist()
+            console.print(f"[{THEME['success']}]Pinned model: {mid}[/{THEME['success']}]")
+            return
+
+        # per-step override  (/model <phase> <model>)
+        phase, model = args[0], resolve_model_name(args[1])
+        ov = dict(policy_from_settings(self.settings).overrides)
+        ov[phase] = model
+        self.settings.set("ai.model_policy.overrides", ov); persist()
+        console.print(f"[{THEME['success']}]Override: {phase} -> {model}[/{THEME['success']}]")
 
     def _cmd_tools(self, args: List[str]) -> None:
         # Comprehensive security tools list
@@ -1149,6 +1251,7 @@ class StrikeCoreShell:
         "provider": _cmd_provider,
         "models": _cmd_models,
         "model": _cmd_model,
+        "/model": _cmd_model_router,
         "tools": _cmd_tools,
         "processes": _cmd_processes,
         "kill": _cmd_kill,

@@ -356,6 +356,54 @@ def tokens_summary() -> dict[str, Any]:
     }
 
 
+@app.get("/api/tokens/by-mode", tags=["tokens"])
+def tokens_by_mode() -> dict[str, Any]:
+    """Per task_type + model usage/cost — feeds the per-step model badges and the
+    dossier-lethality cost view (the router records task_type on every call)."""
+    try:
+        rows = fetch_all(
+            """
+            SELECT COALESCE(task_type,'unknown') AS task_type, model,
+                   COUNT(*) AS calls,
+                   SUM(input_tokens) AS input_tokens,
+                   SUM(output_tokens) AS output_tokens,
+                   SUM(cost_usd_micros) AS cost_micros
+            FROM token_ledger
+            GROUP BY task_type, model
+            ORDER BY cost_micros DESC NULLS LAST
+            """,
+        )
+    except Exception:
+        rows = []
+    return {"by_mode": rows}
+
+
+# ---------------------------------------------------------------------------
+# Hephaestus (toolsmith) — fed by the run records + registry index + audit
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/hephaestus/runs", tags=["hephaestus"])
+def hephaestus_runs(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
+    """Newest-first Hephaestus run records (discovered tools, decisions, gaps,
+    pending H1/H3 approvals, model usage + cost). No DB — reads run-record JSON."""
+    runs_dir = Path.home() / ".strikecore" / "hephaestus" / "runs"
+    runs: list[dict[str, Any]] = []
+    if runs_dir.is_dir():
+        files = sorted(runs_dir.glob("*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)[:limit]
+        for f in files:
+            try:
+                runs.append(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+    pending = [
+        {"run_id": r["run_id"], **p}
+        for r in runs for p in r.get("pending_approvals", [])
+    ]
+    return {"runs": runs, "latest": runs[0] if runs else None, "pending": pending}
+
+
 # ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
