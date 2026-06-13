@@ -23,6 +23,8 @@ import toml
 _USER_CONFIG_DIR = Path.home() / ".strikecore"
 _USER_CONFIG_FILE = _USER_CONFIG_DIR / "config.toml"
 _DEFAULTS_FILE = Path(__file__).resolve().parent / "defaults.toml"
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DOTENV_FILE = _REPO_ROOT / ".env"
 
 # ---------------------------------------------------------------------------
 # Environment variable map
@@ -53,6 +55,32 @@ _ENV_OVERRIDES: Dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _load_dotenv(path: Path) -> None:
+    """Load ``KEY=value`` pairs from *path* into ``os.environ`` (stdlib only).
+
+    Existing environment variables are never overwritten, so a real exported
+    env var still wins over the .env file. This makes the §8 .env workflow
+    (the ``_ENV_OVERRIDES`` layer below) work for *every* settings consumer —
+    the interactive console (``main.py``) and ``health_check.py`` included —
+    not just the standalone ``bin/`` scripts that load .env themselves.
+    """
+    if not path.is_file():
+        return
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
@@ -181,6 +209,9 @@ class Settings:
                     pass
 
             # 3. Environment variable overrides
+            #    Load .env first so its keys populate os.environ before the
+            #    override loop reads them (real exported vars still win).
+            _load_dotenv(_DOTENV_FILE)
             for env_var, dotted_key in _ENV_OVERRIDES.items():
                 env_value = os.environ.get(env_var)
                 if env_value is not None:
