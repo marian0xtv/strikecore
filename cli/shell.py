@@ -66,6 +66,7 @@ _ALL_COMMANDS = [
     "model",
     "/model",
     "hephaestus",
+    "/hephaestus",
     "tools",
     "processes",
     "kill",
