@@ -609,7 +609,18 @@ def agents_view():
 
 @app.route('/hephaestus')
 def hephaestus_view():
-    """Read-only Hephaestus toolsmith view — reads run-record JSON directly."""
+    """Read-only Hephaestus toolsmith view — reads run-record JSON directly.
+
+    Run-record fields (LLM-generated rationale/reason, discovery-derived
+    candidate names) are HTML-escaped before interpolation: this page is
+    reachable over the network tunnel, so reflected free text must not be
+    trusted as markup.
+    """
+    from markupsafe import escape as _esc
+
+    def _e(value) -> str:
+        return str(_esc(str(value)))
+
     runs = []
     if _HEPH_RUNS_DIR.is_dir():
         files = sorted(_HEPH_RUNS_DIR.glob("*.json"),
@@ -626,11 +637,12 @@ def hephaestus_view():
     if pending:
         rows = ""
         for rid, p in pending:
+            gate, rid_e = _e(p["gate"]), _e(rid)
             rows += (f'<div class="glass-bright p-3 mb-2 border border-yellow-500/30">'
-                     f'<span class="text-yellow-400 font-mono text-xs">{p["gate"]}</span> '
-                     f'<span class="text-gray-300 text-xs">on {rid} — {p.get("reason","")}</span>'
+                     f'<span class="text-yellow-400 font-mono text-xs">{gate}</span> '
+                     f'<span class="text-gray-300 text-xs">on {rid_e} — {_e(p.get("reason",""))}</span>'
                      f'<div class="text-[10px] text-gray-500 mt-1">clear with: '
-                     f'<span class="text-cyan-400">hephaestus approve {rid} {p["gate"]}</span></div></div>')
+                     f'<span class="text-cyan-400">hephaestus approve {rid_e} {gate}</span></div></div>')
         pending_html = (f'<h2 class="text-sm font-semibold text-yellow-400 mb-2">'
                         f'Pending sandbox gates ({len(pending)})</h2>{rows}')
 
@@ -644,17 +656,17 @@ def hephaestus_view():
             t = r.get("totals", {})
             usd = f"${t.get('cost_usd_micros', 0) / 1_000_000:.4f}"
             decs = "".join(
-                f'<div class="text-[10px] text-gray-400">{d.get("action","")} '
-                f'<span class="text-gray-300">{d.get("candidate","")}</span> — {d.get("rationale","")}</div>'
+                f'<div class="text-[10px] text-gray-400">{_e(d.get("action",""))} '
+                f'<span class="text-gray-300">{_e(d.get("candidate",""))}</span> — {_e(d.get("rationale",""))}</div>'
                 for d in r.get("decisions", []))
             cards += (
                 f'<div class="glass-bright p-4 mb-3">'
                 f'<div class="flex items-center justify-between mb-1">'
-                f'<span class="text-white font-semibold text-sm">{r["run_id"]}</span>'
-                f'<span class="text-[10px] text-gray-500">{r.get("started_at","")}</span></div>'
+                f'<span class="text-white font-semibold text-sm">{_e(r["run_id"])}</span>'
+                f'<span class="text-[10px] text-gray-500">{_e(r.get("started_at",""))}</span></div>'
                 f'<div class="text-[10px] text-gray-400 mb-2">'
-                f'status <span class="text-gray-200">{r.get("status","")}</span> · '
-                f'focus <span class="text-gray-200">{r.get("params",{}).get("focus_category","")}</span> · '
+                f'status <span class="text-gray-200">{_e(r.get("status",""))}</span> · '
+                f'focus <span class="text-gray-200">{_e(r.get("params",{}).get("focus_category",""))}</span> · '
                 f'candidates {len(r.get("candidates",[]))} · cost {usd}</div>{decs}</div>')
         body = f'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div>{pending_html}</div><div>{cards}</div></div>'
 
