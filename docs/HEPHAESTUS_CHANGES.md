@@ -170,3 +170,16 @@ with cost scaling by lethality.
 > **Note on `[1m]` / current session model:** this build runs on
 > `claude-opus-4-8[1m]`; the router targets the bare ids `claude-fable-5` /
 > `claude-opus-4-8` / `claude-haiku-4-5` (no suffix), per the claude-api skill.
+
+---
+
+## 2026-06-12 — Native console command + GR5 + legacy-dashboard embed
+
+- `hephaestus` / `/hephaestus` is now a first-class console command
+  (`cli/shell.py`), backed by the new shared `hephaestus/cli_core.py`.
+  `bin/hephaestus.py` refactored to delegate to it (no behavior change).
+- **GR5 — Hephaestus-mediated integration:** `bin/sc-registry.py register`
+  refuses non-Hephaestus-originated tools unless `--operator-override "<reason>"`
+  (audited). Existing index entries grandfathered.
+- Legacy dashboard (`osint_agent/dashboard/app.py`) gains a read-only
+  `/hephaestus` page + nav entry (parity with the `web/` React dashboard).

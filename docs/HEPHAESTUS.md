@@ -7,6 +7,17 @@
 
 ---
 
+## Invocation
+
+**Console (primary, interactive):** inside the StrikeCore shell —
+`hephaestus` · `hephaestus run --focus <cat>` · `hephaestus report [run_id]` ·
+`hephaestus approve <run_id> <H1|H3>`. Alias: `/hephaestus`.
+
+**CLI (scripting / cron):** `python3 bin/hephaestus.py run --focus <cat> …`.
+Both share `hephaestus/cli_core.py`.
+
+---
+
 ## 1. Where Hephaestus lives — and which layer it runs at
 
 | | |

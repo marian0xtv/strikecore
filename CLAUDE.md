@@ -360,6 +360,31 @@ requests surfaced in the CLI (`bin/hephaestus.py`) and dashboard
 (`/api/hephaestus/runs`, the Hephaestus page). The dev-time Claude Code subagent
 at `.claude/agents/hephaestus.md` remains a convenience, not the runtime path.
 
+### Hephaestus is a mandatory native console command
+
+The StrikeCore console (`cli/shell.py`) exposes **`hephaestus`** (alias
+`/hephaestus`) as a first-class command — the mandated interactive path:
+
+- `hephaestus` / `hephaestus status` — recent runs + pending H1/H3 gates
+- `hephaestus run --focus <cat> [--depth N] [--dry-run] [--lethality L]`
+- `hephaestus report [run_id]`
+- `hephaestus approve <run_id> <H1|H3>`
+
+It shares `hephaestus/cli_core.py` with `bin/hephaestus.py` (the CLI remains the
+scripting/cron path). All LLM calls route through the GR3 router (`hephaestus`
+profile). The legacy dashboard (`osint_agent/dashboard/app.py`) now embeds a
+read-only **/hephaestus** page (parity with the `web/` React dashboard).
+
+### GR5 — Hephaestus-mediated integration is MANDATORY
+
+Tool integration MUST be Hephaestus-mediated. `bin/sc-registry.py register`
+(the single chokepoint — the `post-receive` hook calls it too) **refuses** any
+tool whose `added_by` is not a Hephaestus run, unless the operator passes
+`--operator-override "<reason>"`, which is written to the SHA-256 audit chain.
+Tools already in the index are grandfathered. This makes the toolsmith the
+default path for every new collection capability and keeps an evidence trail
+for the exceptions (§7 chain-of-custody).
+
 GR1 (Git-only deploy) and GR2 (the `post-receive` hook is the only artifact
 installed directly on atlas) are unchanged. Full change log:
 **`docs/HEPHAESTUS_CHANGES.md`**.
