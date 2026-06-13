@@ -17,12 +17,38 @@ Exit codes: 0 ok · 1 not-found · 2 usage · 3 internal.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
+
+
+# --- Optional: load .env so ANTHROPIC_API_KEY override works ---------------
+# Uses stdlib only to avoid a hard dependency on python-dotenv. Mirrors the
+# pattern in bin/intel-team.py / bin/agent-dossier.py so the §8 .env workflow
+# (settings.py env-override layer) works for the Hephaestus CLI too.
+
+def _load_dotenv(path: Path) -> None:
+    if not path.is_file():
+        return
+    try:
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+    except OSError:
+        pass
+
+
+_load_dotenv(_REPO_ROOT / ".env")
 
 from hephaestus import cli_core  # noqa: E402
 
