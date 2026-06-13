@@ -64,4 +64,25 @@ def test_operator_override_registers_and_audits(tmp_path, monkeypatch):
     d = _write_tool(tmp_path, "tool-o2", "operator")
     rc = sc_registry.cmd_register(_args(d, override="manual first-party import"))
     assert rc == sc_registry.EXIT_OK
-    assert any(ev == "register_override" for ev, _, _ in events)
+    override_events = [(ev, name, payload) for ev, name, payload in events
+                       if ev == "register_override"]
+    assert override_events, "expected a register_override audit event"
+    _, name, payload = override_events[0]
+    assert name == "tool-o2"
+    assert payload["reason"] == "manual first-party import"
+    assert payload["added_by"] == "operator"
+
+
+def test_grandfathered_tool_registers_without_hephaestus(tmp_path, monkeypatch, capsys):
+    # A non-hephaestus tool already present in the index must keep registering
+    # (e.g. a manifest update / bulk re-scan) without override — GR5 grandfather.
+    _isolate(tmp_path, monkeypatch)
+    monkeypatch.setattr(sc_registry, "_load_index",
+                        lambda: {"tools": {"tool-old": {"version": "0.0.1"}}})
+    saved = {}
+    monkeypatch.setattr(sc_registry, "_save_index", lambda idx: saved.update(idx))
+    d = _write_tool(tmp_path, "tool-old", "operator")
+    rc = sc_registry.cmd_register(_args(d))
+    assert rc == sc_registry.EXIT_OK
+    assert "REGISTERED" in capsys.readouterr().out
+    assert "tool-old" in saved.get("tools", {})
