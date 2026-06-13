@@ -243,8 +243,29 @@ def cmd_register(args) -> int:
                {"reason": "gate_not_approved"})
         return EXIT_NOTFOUND
 
-    pending = not gate  # registered but inactive
+    # GR5 — Hephaestus-mediated integration. New tools must originate from a
+    # Hephaestus run unless the operator explicitly overrides (audited).
     index = _load_index()
+    already_registered = manifest["name"] in index.get("tools", {})
+    added_by = str(manifest.get("added_by", "")).strip().lower()
+    heph_originated = added_by.startswith("hephaestus")
+    override = getattr(args, "operator_override", None)
+    if not heph_originated and not already_registered and not override:
+        print(
+            f"REFUSED: {manifest['name']} violates GR5 (Hephaestus-mediated "
+            f"integration): added_by={added_by or 'none'} is not a Hephaestus run. "
+            f"Run it through the toolsmith (console: hephaestus run --focus <cat>) "
+            f"or re-run with --operator-override \"<reason>\".",
+            file=sys.stderr,
+        )
+        _audit("register_refused", manifest["name"],
+               {"reason": "gr5_not_hephaestus_originated", "added_by": added_by})
+        return EXIT_NOTFOUND
+    if override and not heph_originated and not already_registered:
+        _audit("register_override", manifest["name"],
+               {"reason": str(override), "added_by": added_by})
+
+    pending = not gate  # registered but inactive
     entry = _entry_from_manifest(manifest, mp, pending)
     index.setdefault("tools", {})[manifest["name"]] = entry
     _save_index(index)
@@ -297,7 +318,8 @@ def cmd_index(args) -> int:
             continue
         if not (child / "tool.manifest.json").exists():
             continue
-        ns = argparse.Namespace(target=str(child), force_pending=False)
+        ns = argparse.Namespace(target=str(child), force_pending=False,
+                                operator_override=None)
         rc = cmd_register(ns)
         if rc == EXIT_OK:
             registered += 1
@@ -323,6 +345,9 @@ def main(argv: list[str] | None = None) -> int:
     sr.add_argument("target")
     sr.add_argument("--force-pending", action="store_true",
                     help="record a gate_approved=false tool as inactive/pending")
+    sr.add_argument("--operator-override", default=None, metavar="REASON",
+                    help="GR5 escape hatch: register a non-Hephaestus-originated "
+                         "tool; REASON is written to the audit chain")
     sr.set_defaults(func=cmd_register)
 
     sd = sub.add_parser("deregister", help="remove from index")
