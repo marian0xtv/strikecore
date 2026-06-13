@@ -51,6 +51,7 @@ REPORTS_DIR = Path.home() / "strikecore-data" / "reports"
 GRAPHS_DIR = REPORTS_DIR / "graphs"
 PERF_FILE = Path.home() / ".strikecore" / "tool_performance.json"
 AUDIT_DIR = Path.home() / ".strikecore" / "audit"
+_HEPH_RUNS_DIR = Path.home() / ".strikecore" / "hephaestus" / "runs"
 
 # Fix PATH for tool detection
 _extra = [str(Path.home() / ".local" / "bin"), str(Path.home() / "go" / "bin"), "/usr/local/go/bin"]
@@ -144,6 +145,10 @@ SIDEBAR = '''<body>
     <a href="/geoint" class="nav-item %(active_geoint)s">
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9.004 9.004 0 008.716-6.747M12 21a9.004 9.004 0 01-8.716-6.747M12 21c2.485 0 4.5-4.03 4.5-9S14.485 3 12 3m0 18c-2.485 0-4.5-4.03-4.5-9S9.515 3 12 3m0 0a8.997 8.997 0 017.843 4.582M12 3a8.997 8.997 0 00-7.843 4.582m15.686 0A11.953 11.953 0 0112 10.5c-2.998 0-5.74-1.1-7.843-2.918m15.686 0A8.959 8.959 0 0121 12c0 .778-.099 1.533-.284 2.253m0 0A17.919 17.919 0 0112 16.5a17.92 17.92 0 01-8.716-2.247m0 0A9.015 9.015 0 013 12c0-1.605.42-3.113 1.157-4.418"/></svg>
       GEOINT</a>
+    <div class="nav-section" style="margin-top:24px">Toolsmith</div>
+    <a href="/hephaestus" class="nav-item %(active_hephaestus)s">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z"/></svg>
+      Hephaestus</a>
 
     <div class="nav-section" style="margin-top:24px">Gateway Telefonico</div>
     <a href="/voip" class="nav-item %(active_voip)s">
@@ -267,6 +272,7 @@ def _render(title, content, active=""):
         "active_email": _a("email"),
         "active_tunnel": _a("tunnel"),
         "active_voip": _a("voip"),
+        "active_hephaestus": _a("hephaestus"),
         **status,
     }
     return Response(
@@ -599,6 +605,65 @@ def agents_view():
     '''
 
     return _render("Agents", content, "agents")
+
+
+@app.route('/hephaestus')
+def hephaestus_view():
+    """Read-only Hephaestus toolsmith view — reads run-record JSON directly."""
+    runs = []
+    if _HEPH_RUNS_DIR.is_dir():
+        files = sorted(_HEPH_RUNS_DIR.glob("*.json"),
+                       key=lambda p: p.stat().st_mtime, reverse=True)[:20]
+        for f in files:
+            try:
+                runs.append(json.loads(f.read_text(encoding="utf-8")))
+            except Exception:
+                continue
+
+    pending = [(r["run_id"], p) for r in runs for p in r.get("pending_approvals", [])]
+
+    pending_html = ""
+    if pending:
+        rows = ""
+        for rid, p in pending:
+            rows += (f'<div class="glass-bright p-3 mb-2 border border-yellow-500/30">'
+                     f'<span class="text-yellow-400 font-mono text-xs">{p["gate"]}</span> '
+                     f'<span class="text-gray-300 text-xs">on {rid} — {p.get("reason","")}</span>'
+                     f'<div class="text-[10px] text-gray-500 mt-1">clear with: '
+                     f'<span class="text-cyan-400">hephaestus approve {rid} {p["gate"]}</span></div></div>')
+        pending_html = (f'<h2 class="text-sm font-semibold text-yellow-400 mb-2">'
+                        f'Pending sandbox gates ({len(pending)})</h2>{rows}')
+
+    if not runs:
+        body = ('<div class="glass-bright p-6 text-gray-400 text-sm">'
+                'No Hephaestus runs yet. Start one from the console: '
+                '<span class="text-cyan-400">hephaestus run --focus &lt;category&gt;</span>.</div>')
+    else:
+        cards = ""
+        for r in runs:
+            t = r.get("totals", {})
+            usd = f"${t.get('cost_usd_micros', 0) / 1_000_000:.4f}"
+            decs = "".join(
+                f'<div class="text-[10px] text-gray-400">{d.get("action","")} '
+                f'<span class="text-gray-300">{d.get("candidate","")}</span> — {d.get("rationale","")}</div>'
+                for d in r.get("decisions", []))
+            cards += (
+                f'<div class="glass-bright p-4 mb-3">'
+                f'<div class="flex items-center justify-between mb-1">'
+                f'<span class="text-white font-semibold text-sm">{r["run_id"]}</span>'
+                f'<span class="text-[10px] text-gray-500">{r.get("started_at","")}</span></div>'
+                f'<div class="text-[10px] text-gray-400 mb-2">'
+                f'status <span class="text-gray-200">{r.get("status","")}</span> · '
+                f'focus <span class="text-gray-200">{r.get("params",{}).get("focus_category","")}</span> · '
+                f'candidates {len(r.get("candidates",[]))} · cost {usd}</div>{decs}</div>')
+        body = f'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div>{pending_html}</div><div>{cards}</div></div>'
+
+    content = f'''
+    <h1 class="text-xl font-bold text-white mb-1">Hephaestus — Toolsmith</h1>
+    <p class="text-xs text-gray-500 mb-6">Native R&amp;D agent · run records read-only · approvals via console/CLI</p>
+    {body}
+    '''
+    return _render("Hephaestus", content, "hephaestus")
 
 
 @app.route('/infrastructure')
