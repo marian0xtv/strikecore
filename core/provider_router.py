@@ -37,6 +37,17 @@ from governance.model_router import (
 from governance.token_ledger import estimate_cost_micros, log_llm_call
 
 
+# Account-availability remap. Claude Fable 5 is not available on this account
+# (the API returns HTTP 404 directing to Opus 4.8). The routing *policy* still
+# expresses intent (heaviest reasoning -> the "fable" tier); this provider-layer
+# substitution makes those calls actually succeed by routing them to Opus 4.8.
+# Cost is recorded against the model truly called. One-line revert when Fable
+# access is granted: empty this dict.
+_UNAVAILABLE_MODEL_SUBSTITUTIONS: dict[str, str] = {
+    "claude-fable-5": "claude-opus-4-8",
+}
+
+
 # ---------------------------------------------------------------------------
 # Per-call cost telemetry (cost-aware router, GR3)
 # ---------------------------------------------------------------------------
@@ -343,6 +354,12 @@ class ProviderRouter:
             chosen, reason = resolve_model_name(model), f"explicit:{resolve_model_name(model)}"
         else:
             chosen, reason = self.policy.resolve(task_type)
+
+        # 1b) substitute account-unavailable models (e.g. Fable 5 -> Opus 4.8)
+        substitute = _UNAVAILABLE_MODEL_SUBSTITUTIONS.get(chosen)
+        if substitute:
+            reason = f"{reason} (unavailable:{chosen}->{substitute})"
+            chosen = substitute
 
         # 2) dry-run short-circuit (no network, no credits)
         use_dry = self._dry_run if dry_run is None else dry_run

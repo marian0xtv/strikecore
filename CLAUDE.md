@@ -349,6 +349,12 @@ MUST pass a `task_type`. Never hardcode API keys.
   → Haiku; reasoning/planning → Opus; heaviest reasoning (deep-research
   synthesis, novel design, complex gap analysis, ACH + final dossier narrative)
   → Fable. Dossier "lethality" biases analysis steps upward; bulk stays Haiku.
+- **Account availability:** Claude Fable 5 is **not available** on the current
+  account (the API returns 404 → Opus 4.8). `core/provider_router.py` therefore
+  substitutes **Opus 4.8** for the `fable` tier at call time
+  (`_UNAVAILABLE_MODEL_SUBSTITUTIONS`). Routing *intent* is unchanged (heavy work
+  still selects the fable tier); only the concrete model swaps. One-line revert
+  when Fable access is granted.
 
 ### Hephaestus is a native StrikeCore agent
 
