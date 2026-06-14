@@ -202,6 +202,16 @@ class ProviderRouter:
     def set_policy(self, policy: ModelPolicy) -> None:
         self.policy = policy
 
+    def resolve_model(self, task_type: str | None = None,
+                      model: str | None = None) -> str:
+        """The concrete model id this router would call for a task_type/model,
+        after applying account-availability substitutions (e.g. Fable->Opus)."""
+        if model:
+            chosen = resolve_model_name(model)
+        else:
+            chosen, _ = self.policy.resolve(task_type)
+        return _UNAVAILABLE_MODEL_SUBSTITUTIONS.get(chosen, chosen)
+
     def set_dry_run(self, on: bool) -> None:
         self._dry_run = bool(on)
 
@@ -488,13 +498,36 @@ class ProviderRouter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         system: str | None = None,
+        *,
+        task_type: str | None = None,
+        model: str | None = None,
+        dry_run: bool | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream a chat completion from the active provider.
+        """Stream a routed, cost-recorded chat completion.
 
-        Streaming does **not** use the fallback chain because partial output
-        has already been emitted.  Falls back to non-streaming ``chat()`` if
-        streaming is not available.
+        Resolves the model from the cost-aware policy (applying availability
+        substitutions), yields text deltas, and records an estimated CallRecord
+        when the stream completes so run_cost()/model_usage stay populated.
+        Falls back to non-streaming chat() (which records exact cost) if the
+        provider cannot stream or fails before any token is emitted.
         """
+        # 1) resolve model + reason (mirror chat()), apply substitution
+        if model:
+            chosen, reason = resolve_model_name(model), f"explicit:{resolve_model_name(model)}"
+        else:
+            chosen, reason = self.policy.resolve(task_type)
+        substitute = _UNAVAILABLE_MODEL_SUBSTITUTIONS.get(chosen)
+        if substitute:
+            reason = f"{reason} (unavailable:{chosen}->{substitute})"
+            chosen = substitute
+
+        # 2) dry-run short-circuit: synthetic content, recorded estimated cost
+        use_dry = self._dry_run if dry_run is None else dry_run
+        if use_dry:
+            resp = self._dry_run_response(messages, system, chosen, reason, task_type)
+            yield resp.content
+            return
+
         chain = self._ordered_chain()
         last_error: Exception | None = None
 
@@ -502,30 +535,80 @@ class ProviderRouter:
             provider = self._providers.get(name)
             if provider is None:
                 continue
+            if not hasattr(provider, "stream_chat"):
+                # provider can't stream -> routed non-streaming fallback
+                resp = await self.chat(messages, tools, system,
+                                       task_type=task_type, model=chosen, dry_run=False)
+                yield resp.content
+                return
 
             stats = self._stats.setdefault(name, ProviderStats())
             start = time.monotonic()
-
+            effective_tools = tools if provider.supports_tools() else None
+            accumulated: list[str] = []
             try:
-                effective_tools = tools if provider.supports_tools() else None
-                async for chunk in provider.stream_chat(messages, effective_tools, system):
+                try:
+                    agen = provider.stream_chat(messages, effective_tools, system, model=chosen)
+                except TypeError:
+                    # provider not yet updated for the per-call model knob
+                    agen = provider.stream_chat(messages, effective_tools, system)
+                async for chunk in agen:
+                    accumulated.append(chunk)
                     yield chunk
 
                 latency = time.monotonic() - start
                 stats.total_requests += 1
                 stats.total_latency += latency
                 stats.last_request_at = time.time()
+                self._record_stream_call(messages, system, "".join(accumulated),
+                                         chosen, reason, task_type, latency, name)
                 return  # success
 
             except Exception as exc:
                 stats.total_errors += 1
                 stats.last_error = str(exc)
                 last_error = exc
-                continue
+                if not accumulated:
+                    # nothing emitted yet -> safe to fall back to chat()
+                    resp = await self.chat(messages, tools, system,
+                                           task_type=task_type, model=chosen, dry_run=False)
+                    yield resp.content
+                    return
+                raise  # partial output already emitted; cannot safely retry
 
         raise ConnectionError(
             f"All providers failed for streaming. Last error: {last_error}"
         )
+
+    def _record_stream_call(self, messages: list[dict[str, Any]], system: str | None,
+                            output_text: str, model: str, reason: str,
+                            task_type: str | None, latency: float,
+                            provider_name: str) -> None:
+        """Record an estimated CallRecord for a completed streamed call."""
+        text = (system or "")
+        for m in messages or []:
+            c = m.get("content", "")
+            text += c if isinstance(c, str) else str(c)
+        in_tokens = max(1, len(text) // 4)
+        out_tokens = max(1, len(output_text) // 4)
+        try:
+            cost = estimate_cost_micros(model, in_tokens, out_tokens)
+        except Exception:  # noqa: BLE001
+            cost = 0
+        self.call_log.append(CallRecord(
+            task_type=task_type or "", model=model, routing_reason=reason,
+            input_tokens=in_tokens, output_tokens=out_tokens,
+            cost_micros=cost, dry_run=False,
+        ))
+        try:
+            log_llm_call(
+                provider=provider_name, model=model,
+                input_tokens=in_tokens, output_tokens=out_tokens,
+                cached_tokens=0, cache_write_tokens=0,
+                latency_ms=int(latency * 1000), task_type=task_type,
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     # ------------------------------------------------------------------
     # Health checks

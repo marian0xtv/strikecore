@@ -227,9 +227,12 @@ class AnthropicProvider(BaseProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         system: str | None = None,
+        model: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Yield partial content deltas as they arrive."""
         kwargs, extra_headers = self._build_request(messages, tools, system)
+        if model:
+            kwargs["model"] = model
         backoff = _INITIAL_BACKOFF_S
 
         for attempt in range(_MAX_RETRIES + 1):
