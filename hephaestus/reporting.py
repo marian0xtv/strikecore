@@ -5,7 +5,7 @@ instead of printing. NullReporter (the default) is silent and defers every gate
 -- preserving programmatic/test behavior. StreamReporter renders live phase
 banners + token streaming to a text stream and prompts for gate approval, but
 only when its input stream is a TTY (otherwise it defers, so cron/pipes still
-work). ASCII only, no emojis (house style, §12).
+work). ASCII only, no emojis (house style, see CLAUDE.md section 12).
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ class StreamReporter(RunReporter):
         self._w(prompt)
         try:
             answer = (self._in.readline() or "").strip().lower()
-        except (EOFError, KeyboardInterrupt, Exception):
+        except (KeyboardInterrupt, Exception):
             return False
         return answer in ("y", "yes")
 
