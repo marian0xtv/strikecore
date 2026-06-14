@@ -230,9 +230,10 @@ class AnthropicProvider(BaseProvider):
         model: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Yield partial content deltas as they arrive."""
-        kwargs, extra_headers = self._build_request(messages, tools, system)
-        if model:
-            kwargs["model"] = model
+        # Pass model into _build_request so max_tokens is computed for the
+        # per-call model (not the provider default) — patching only kwargs["model"]
+        # would leave a too-large max_tokens and the API would reject the request.
+        kwargs, extra_headers = self._build_request(messages, tools, system, model=model)
         backoff = _INITIAL_BACKOFF_S
 
         for attempt in range(_MAX_RETRIES + 1):
