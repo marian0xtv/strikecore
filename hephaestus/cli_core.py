@@ -96,13 +96,15 @@ def decision_lines(rec: dict) -> list[str]:
 
 
 def run_pass(*, focus: str, depth: int, dry_run: bool,
-             profile: str, lethality: str) -> dict[str, Any]:
+             profile: str, lethality: str, reporter=None) -> dict[str, Any]:
     """Execute one R&D pass and return the run record. Raises on agent error."""
+    from hephaestus.reporting import NullReporter
     router = build_router(dry_run)
     agent = Hephaestus(router)
     rec = asyncio.run(agent.run(
         focus_category=focus, depth=depth, dry_run=dry_run,
-        profile=profile, lethality=lethality))
+        profile=profile, lethality=lethality,
+        reporter=reporter or NullReporter()))
     audit("run", rec["run_id"], {"status": rec["status"],
                                  "cost_micros": rec["totals"]["cost_usd_micros"]})
     return rec

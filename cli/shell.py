@@ -644,9 +644,11 @@ class StrikeCoreShell:
             lethality = self._flag_value(args, "--lethality") or "balanced"
             console.print(f"[{THEME['muted']}]Hephaestus: focus={focus} depth={depth} "
                           f"lethality={lethality}{' (dry-run)' if dry_run else ''} ...[/{THEME['muted']}]")
+            from hephaestus.reporting import StreamReporter
             try:
                 rec = cli_core.run_pass(focus=focus, depth=depth, dry_run=dry_run,
-                                        profile="hephaestus", lethality=lethality)
+                                        profile="hephaestus", lethality=lethality,
+                                        reporter=StreamReporter())
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[{THEME['error']}]hephaestus run failed: {exc}[/{THEME['error']}]")
                 return

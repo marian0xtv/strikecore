@@ -56,10 +56,12 @@ EXIT_OK, EXIT_NOTFOUND, EXIT_USAGE, EXIT_INTERNAL = 0, 1, 2, 3
 
 
 def cmd_run(args) -> int:
+    from hephaestus.reporting import StreamReporter
     try:
         rec = cli_core.run_pass(focus=args.focus, depth=args.depth,
                                 dry_run=args.dry_run, profile=args.profile,
-                                lethality=args.lethality)
+                                lethality=args.lethality,
+                                reporter=StreamReporter())
     except Exception as exc:  # noqa: BLE001
         print(f"hephaestus run failed: {exc}", file=sys.stderr)
         return EXIT_INTERNAL
