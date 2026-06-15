@@ -376,6 +376,14 @@ The StrikeCore console (`cli/shell.py`) exposes **`hephaestus`** (alias
 - `hephaestus report [run_id]`
 - `hephaestus approve <run_id> <H1|H3>`
 
+`hephaestus run` is **always verbose**: every phase (discovery → research → gap
+→ decision → gates) streams live, including token-by-token LLM output, and H1/H3
+gates are approved **interactively during the run** (TTY only; non-interactive
+sessions auto-defer to `pending`, cleared later via `hephaestus approve`).
+Approving live completes the run and prints the exact `sc-registry register`
+command to use once the tool is built (no auto-registration of unbuilt tools).
+Streamed-call cost is *estimated* (not exact provider usage).
+
 It shares `hephaestus/cli_core.py` with `bin/hephaestus.py` (the CLI remains the
 scripting/cron path). All LLM calls route through the GR3 router (`hephaestus`
 profile). The legacy dashboard (`osint_agent/dashboard/app.py`) now embeds a

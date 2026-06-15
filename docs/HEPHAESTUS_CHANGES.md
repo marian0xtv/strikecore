@@ -183,3 +183,13 @@ with cost scaling by lethality.
   (audited). Existing index entries grandfathered.
 - Legacy dashboard (`osint_agent/dashboard/app.py`) gains a read-only
   `/hephaestus` page + nav entry (parity with the `web/` React dashboard).
+
+## 2026-06-14 — Live-verbose interactive runs
+
+- `hephaestus run` now streams every phase live (token-by-token LLM output) via
+  a new `RunReporter` seam (`hephaestus/reporting.py`: Null + Stream).
+- H1/H3 gates are approved interactively mid-run (TTY-gated; non-interactive
+  auto-defers to pending). Approving prints the `sc-registry register` command.
+- `core/provider_router.py:stream_chat` is now routing- & cost-aware (resolves
+  the policy model + Fable→Opus remap, records an estimated CallRecord);
+  `providers/anthropic_provider.py:stream_chat` gained a `model` knob.

@@ -16,6 +16,9 @@
 **CLI (scripting / cron):** `python3 bin/hephaestus.py run --focus <cat> …`.
 Both share `hephaestus/cli_core.py`.
 
+Runs stream live by default — phases, token output, and interactive H1/H3 gate
+prompts. In a non-interactive shell (cron/pipe) gates auto-defer to `pending`.
+
 ---
 
 ## 1. Where Hephaestus lives — and which layer it runs at
