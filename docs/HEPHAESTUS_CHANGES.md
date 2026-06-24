@@ -3,6 +3,31 @@
 Everything added/modified for (1) the **platform-wide cost-aware LLM router** and
 (2) the **native Hephaestus** StrikeCore agent. Dates: 2026-06-12.
 
+---
+
+## Addendum 2026-06-24 — Dossier output capture + Hephaestus autoimprove
+
+- **New module `core/dossier_output.py`** — single source of truth for the
+  `~/strikecore-data/dossieroutputs/<UTC>_<source>_<target>/` mirror
+  (`dossier.json` + `output.log` + `meta.json` + `dossier.md`). Helpers:
+  `new_run_dir`, `write_run`, `iter_runs`, `tee_stdout`, `record_console`.
+  Capture is additive and failure-isolated.
+- **All three dossier paths capture** to the mirror: console `dossier`
+  (`cli/shell.py:_cmd_dossier`, Rich-record + investigation-store snapshot),
+  `bin/intel-team.py`, and `bin/agent-dossier.py` (stdout tee + structured JSON).
+- **Hephaestus `run --fetch-from-outputs [--outputs-limit N]`** — new dossier
+  autoimprove pass (`hephaestus/agent.py:_collect_dossier_improve`): ingest
+  captured outputs → detect gaps (domain coverage, `>0.7` single-source doctrine
+  flags, tool-failure markers, empty sections) → routed research → propose fixes.
+  Tool gaps raise H1/H3 gates; prompt/flow/config gaps are written to
+  `~/.strikecore/hephaestus/improvements/<run_id>.md` and surfaced, never
+  auto-applied (GR5; NL_SYSTEM_PROMPT preserved).
+- **Run-record schema** gains optional `dossier_gap_analysis` + `params`
+  `fetch_from_outputs`/`outputs_limit`; **router profile** gains
+  `hephaestus:dossier_gap` (fable). Wired through `cli_core.run_pass`,
+  `bin/hephaestus.py`, and the console `hephaestus run` command.
+- Tests: `tests/test_dossier_output.py`, `tests/test_hephaestus_dossier_improve.py`.
+
 > **Reconciliation:** an earlier pass added a *Claude Code* dev-time subagent at
 > `.claude/agents/hephaestus.md`. That remains as a dev-time helper. The
 > **runtime** Hephaestus described here is a native StrikeCore Python agent

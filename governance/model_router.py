@@ -123,6 +123,7 @@ HEPHAESTUS_PROFILE = RoutingProfile(
         "hephaestus:extract": "haiku",
         "hephaestus:research": "opus",
         "hephaestus:gap": "fable",
+        "hephaestus:dossier_gap": "fable",
         "hephaestus:design": "fable",
         "hephaestus:decision": "opus",
     },

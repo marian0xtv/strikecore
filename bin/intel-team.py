@@ -146,8 +146,20 @@ async def _amain(args: argparse.Namespace) -> int:
 
     team = IntelTeam(router, investigation_store=store)
 
+    try:
+        from core import dossier_output
+    except Exception:  # noqa: BLE001
+        dossier_output = None  # type: ignore[assignment]
+
     print(f"[intel-team] PIR={pir.id} target={pir.target!r}", file=sys.stderr)
-    dossier = await team.investigate(pir, operator_notes=args.operator_notes)
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    if dossier_output is not None:
+        with dossier_output.tee_stdout() as _buf:
+            dossier = await team.investigate(pir, operator_notes=args.operator_notes)
+            transcript = _buf.getvalue()
+    else:
+        dossier = await team.investigate(pir, operator_notes=args.operator_notes)
+        transcript = ""
 
     # Persist dossier
     reports_dir = Path(args.reports_dir).expanduser()
@@ -164,6 +176,23 @@ async def _amain(args: argparse.Namespace) -> int:
     print(f"[intel-team] dossier: {md_path}")
     print(f"[intel-team] dossier-json: {json_path}")
     print(f"[intel-team] bluf: {dossier.bluf[:240]}")
+
+    # Unified dossieroutputs/ mirror for Hephaestus autoimprove (best-effort).
+    if dossier_output is not None:
+        try:
+            run_dir = dossier_output.new_run_dir(pir.target, "intel_team")
+            dossier_output.write_run(
+                run_dir,
+                meta={"source": "intel_team", "target": pir.target,
+                      "pir_id": pir.id, "pir": pir.question, "started_at": started,
+                      "report_md": str(md_path), "report_json": str(json_path)},
+                dossier_json=dossier.to_dict(),
+                transcript=transcript,
+                markdown=dossier.to_markdown(),
+            )
+            print(f"[intel-team] dossier-output: {run_dir}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[intel-team] dossier-output capture skipped: {exc}", file=sys.stderr)
     return 0
 
 

@@ -81,6 +81,11 @@ def summary_lines(rec: dict) -> list[str]:
                    f"{u['calls']:>2} call(s)  {fmt_usd(u['cost_micros'])}  [{u.get('reason','')}]")
     t = rec["totals"]
     out.append(f"  TOTAL: {t['calls']} call(s)  {fmt_usd(t['cost_usd_micros'])}")
+    dga = rec.get("dossier_gap_analysis")
+    if dga:
+        out.append(f"  dossier gaps: {len(dga.get('gaps', []))} from "
+                   f"{dga.get('outputs_considered', 0)} output(s)  "
+                   f"-> plan: {dga.get('improvement_plan_path', '')}")
     for p in rec["pending_approvals"]:
         out.append(f"  PENDING {p['gate']}: {p['reason']}")
     return out
@@ -96,7 +101,9 @@ def decision_lines(rec: dict) -> list[str]:
 
 
 def run_pass(*, focus: str, depth: int, dry_run: bool,
-             profile: str, lethality: str, reporter=None) -> dict[str, Any]:
+             profile: str, lethality: str, reporter=None,
+             fetch_from_outputs: bool = False,
+             outputs_limit: int = 10) -> dict[str, Any]:
     """Execute one R&D pass and return the run record. Raises on agent error."""
     from hephaestus.reporting import NullReporter
     router = build_router(dry_run)
@@ -104,6 +111,7 @@ def run_pass(*, focus: str, depth: int, dry_run: bool,
     rec = asyncio.run(agent.run(
         focus_category=focus, depth=depth, dry_run=dry_run,
         profile=profile, lethality=lethality,
+        fetch_from_outputs=fetch_from_outputs, outputs_limit=outputs_limit,
         reporter=reporter or NullReporter()))
     audit("run", rec["run_id"], {"status": rec["status"],
                                  "cost_micros": rec["totals"]["cost_usd_micros"]})

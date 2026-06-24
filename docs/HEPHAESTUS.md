@@ -280,3 +280,40 @@ post-receive                      # deploy hook source (installed on atlas)
 python3 tools/<name>/sc-<name>.py --selftest --json
 python3 bin/sc-registry.py validate tools/<name>
 ```
+
+---
+
+## 6. Dossier-mode autoimprove (`--fetch-from-outputs`)
+
+Every dossier run now leaves a uniform, complete record under
+`~/strikecore-data/dossieroutputs/<UTC>_<source>_<target>/`:
+
+| File | Contents |
+|---|---|
+| `dossier.json` | complete structured record (`Dossier.to_dict()` / agent result / investigation-store snapshot for the console path) |
+| `output.log`   | the **entire** captured run transcript |
+| `meta.json`    | target, source, pir/task, timestamps, sibling report paths |
+| `dossier.md`   | human-readable markdown (when the path produces one) |
+
+All three dossier paths write here: the console `dossier` command, `bin/intel-team.py`,
+and `bin/agent-dossier.py`. Capture is additive and failure-isolated — it can never
+break a dossier run. The single source of truth is `core/dossier_output.py`.
+
+Hephaestus consumes that folder to **autoimprove dossier mode**:
+
+```bash
+hephaestus run --fetch-from-outputs [--outputs-limit N] [--dry-run]   # console or bin/hephaestus.py
+```
+
+The pass ingests the captured outputs, detects gaps (domain-coverage holes,
+`>0.7` single-source doctrine violations, tool-failure markers in `output.log`,
+empty BLUF/key-judgment sections), runs routed research, and proposes fixes:
+
+- **tool** gaps become gated build decisions (H1/H3 + `sc-registry`, exactly like
+  the discovery path) — nothing untrusted runs or registers without approval;
+- **prompt/flow/config** gaps are written to an improvement-plan artifact at
+  `~/.strikecore/hephaestus/improvements/<run_id>.md` and **surfaced, not
+  auto-applied** (GR5; `NL_SYSTEM_PROMPT` stays preserved per CLAUDE.md section 10).
+
+The run record gains a `dossier_gap_analysis` block (`outputs_considered`,
+`improvement_plan_path`, `gaps[]`); `hephaestus report` shows a one-line gap summary.

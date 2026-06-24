@@ -96,19 +96,38 @@ async def _amain(args: argparse.Namespace) -> int:
         except Exception as exc:  # noqa: BLE001
             logging.warning("InvestigationStore unavailable: %s", exc)
 
+    try:
+        from core import dossier_output
+    except Exception:  # noqa: BLE001
+        dossier_output = None  # type: ignore[assignment]
+
+    from datetime import datetime, timezone
+    started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     router = ProviderRouter(get_settings())
-    result = await build_dossier(
-        router=router,
-        target=args.target,
-        pir=args.pir,
-        operator_notes=args.operator_notes,
-        constraints=_parse_constraints(args.constraint),
-        investigation_store=store,
-    )
+    if dossier_output is not None:
+        with dossier_output.tee_stdout() as _buf:
+            result = await build_dossier(
+                router=router,
+                target=args.target,
+                pir=args.pir,
+                operator_notes=args.operator_notes,
+                constraints=_parse_constraints(args.constraint),
+                investigation_store=store,
+            )
+            transcript = _buf.getvalue()
+    else:
+        result = await build_dossier(
+            router=router,
+            target=args.target,
+            pir=args.pir,
+            operator_notes=args.operator_notes,
+            constraints=_parse_constraints(args.constraint),
+            investigation_store=store,
+        )
+        transcript = ""
 
     reports_dir = Path(args.reports_dir).expanduser()
     reports_dir.mkdir(parents=True, exist_ok=True)
-    from datetime import datetime, timezone
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     safe_target = "".join(c if c.isalnum() or c in "._-" else "_" for c in args.target)[:80]
     base = reports_dir / f"{ts}_{safe_target}_{result['pir_id']}"
@@ -126,6 +145,24 @@ async def _amain(args: argparse.Namespace) -> int:
     print(f"[agent-dossier] improvements={result['improvements']}")
     print(f"[agent-dossier] dossier_md={md_path}")
     print(f"[agent-dossier] dossier_json={json_path}")
+
+    # Unified dossieroutputs/ mirror for Hephaestus autoimprove (best-effort).
+    if dossier_output is not None:
+        try:
+            run_dir = dossier_output.new_run_dir(args.target, "agent_dossier")
+            dossier_output.write_run(
+                run_dir,
+                meta={"source": "agent_dossier", "target": args.target,
+                      "pir_id": result["pir_id"], "pir": args.pir,
+                      "started_at": started, "cost_usd": result.get("cost_usd"),
+                      "report_md": str(md_path), "report_json": str(json_path)},
+                dossier_json=result,
+                transcript=transcript,
+                markdown=_render_md(result),
+            )
+            print(f"[agent-dossier] dossier_output={run_dir}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"[agent-dossier] dossier-output capture skipped: {exc}", file=sys.stderr)
     return 0
 
 

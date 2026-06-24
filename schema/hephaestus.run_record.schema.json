@@ -25,7 +25,9 @@
         "depth": { "type": "integer", "minimum": 1 },
         "dry_run": { "type": "boolean" },
         "profile": { "type": "string" },
-        "lethality": { "type": "string" }
+        "lethality": { "type": "string" },
+        "fetch_from_outputs": { "type": "boolean" },
+        "outputs_limit": { "type": "integer", "minimum": 0 }
       }
     },
     "candidates": {
@@ -67,6 +69,31 @@
         "covered": { "type": "array", "items": { "type": "string" } },
         "gaps": { "type": "array", "items": { "type": "string" } },
         "target_gap": { "type": "string" }
+      }
+    },
+    "dossier_gap_analysis": {
+      "type": "object",
+      "description": "Present on a --fetch-from-outputs autoimprove pass: gaps detected in captured dossier outputs + the written improvement-plan path.",
+      "additionalProperties": false,
+      "required": ["gaps"],
+      "properties": {
+        "outputs_considered": { "type": "integer", "minimum": 0 },
+        "improvement_plan_path": { "type": "string" },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["category", "severity", "proposed_fix_kind"],
+            "properties": {
+              "category": { "type": "string" },
+              "severity": { "type": "string", "enum": ["low", "medium", "high"] },
+              "evidence": { "type": "string" },
+              "proposed_fix_kind": { "type": "string", "enum": ["tool", "prompt/flow", "config"] },
+              "proposed_fix": { "type": "string" }
+            }
+          }
+        }
       }
     },
     "decisions": {

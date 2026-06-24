@@ -35,6 +35,7 @@ bin/intel-team.py (CLI)
 | `~/strikecore-data/investigations/`      | JSON per target (14 categories, see `core/investigation_store.py`) |
 | `~/strikecore-data/reports/`             | Operator-facing MD + HTML dossiers |
 | `~/strikecore-data/reports/intel_team/`  | NEW — intel-team dossiers (MD + JSON) |
+| `~/strikecore-data/dossieroutputs/`      | NEW — uniform per-run dossier capture (JSON + full `output.log` + meta) for **all** dossier paths; the source Hephaestus autoimprove reads (`core/dossier_output.py`) |
 | `~/strikecore-data/dossiers_legacy/`     | NEW — legacy `<target>.txt` notes moved out of repo root |
 
 ### Core modules (`core/`, 9,574 LOC across 23 files)
@@ -388,6 +389,18 @@ It shares `hephaestus/cli_core.py` with `bin/hephaestus.py` (the CLI remains the
 scripting/cron path). All LLM calls route through the GR3 router (`hephaestus`
 profile). The legacy dashboard (`osint_agent/dashboard/app.py`) now embeds a
 read-only **/hephaestus** page (parity with the `web/` React dashboard).
+
+**Dossier autoimprove (NEW 2026-06-24).** Every dossier run (console `dossier`,
+`bin/intel-team.py`, `bin/agent-dossier.py`) now writes a uniform per-run capture
+to `~/strikecore-data/dossieroutputs/` (complete `dossier.json` + entire
+`output.log` + `meta.json`) via `core/dossier_output.py` — additive and
+failure-isolated. `hephaestus run --fetch-from-outputs [--outputs-limit N]`
+ingests that folder, detects dossier-mode gaps (coverage, `>0.7` single-source
+doctrine flags, tool failures, empty sections), researches them, and **proposes**
+fixes: tool gaps raise H1/H3 gates (GR5 + `sc-registry`), while prompt/flow/config
+proposals are written to `~/.strikecore/hephaestus/improvements/<run_id>.md` and
+surfaced — never auto-applied (`NL_SYSTEM_PROMPT` preserved per §10). Run records
+gain an optional `dossier_gap_analysis` block. See `docs/HEPHAESTUS.md` §6.
 
 ### GR5 — Hephaestus-mediated integration is MANDATORY
 

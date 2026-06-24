@@ -57,10 +57,17 @@ EXIT_OK, EXIT_NOTFOUND, EXIT_USAGE, EXIT_INTERNAL = 0, 1, 2, 3
 
 def cmd_run(args) -> int:
     from hephaestus.reporting import StreamReporter
+    if not args.fetch_from_outputs and not args.focus:
+        print("hephaestus run: provide --focus <category> or --fetch-from-outputs",
+              file=sys.stderr)
+        return EXIT_USAGE
+    focus = args.focus or "dossier-mode"
     try:
-        rec = cli_core.run_pass(focus=args.focus, depth=args.depth,
+        rec = cli_core.run_pass(focus=focus, depth=args.depth,
                                 dry_run=args.dry_run, profile=args.profile,
                                 lethality=args.lethality,
+                                fetch_from_outputs=args.fetch_from_outputs,
+                                outputs_limit=args.outputs_limit,
                                 reporter=StreamReporter())
     except Exception as exc:  # noqa: BLE001
         print(f"hephaestus run failed: {exc}", file=sys.stderr)
@@ -109,7 +116,13 @@ def main(argv=None) -> int:
     sub = p.add_subparsers(dest="cmd", required=True)
 
     pr = sub.add_parser("run", help="run an R&D discovery/research/decide pass")
-    pr.add_argument("--focus", required=True, help="OSINT gap category to target")
+    pr.add_argument("--focus", help="OSINT gap category to target "
+                    "(optional with --fetch-from-outputs)")
+    pr.add_argument("--fetch-from-outputs", action="store_true",
+                    help="dossier autoimprove: analyze captured dossier outputs, "
+                         "detect gaps, research, and propose gated fixes")
+    pr.add_argument("--outputs-limit", type=int, default=10,
+                    help="max captured dossier outputs to consider (default 10)")
     pr.add_argument("--depth", type=int, default=1)
     pr.add_argument("--dry-run", action="store_true",
                     help="no real API calls / no real targets; routing+cost offline")

@@ -634,20 +634,29 @@ class StrikeCoreShell:
             return
 
         if sub == "run":
+            fetch_from_outputs = "--fetch-from-outputs" in args
             focus = self._flag_value(args, "--focus")
-            if not focus:
+            if not focus and not fetch_from_outputs:
                 console.print(f"[{THEME['warning']}]Usage: hephaestus run --focus <category> "
-                              f"[--depth N] [--dry-run] [--lethality economy|balanced|max][/{THEME['warning']}]")
+                              f"[--depth N] [--dry-run] [--lethality economy|balanced|max]\n"
+                              f"   or: hephaestus run --fetch-from-outputs [--outputs-limit N]"
+                              f"[/{THEME['warning']}]")
                 return
+            focus = focus or "dossier-mode"
             depth = int(self._flag_value(args, "--depth") or 1)
+            outputs_limit = int(self._flag_value(args, "--outputs-limit") or 10)
             dry_run = "--dry-run" in args
             lethality = self._flag_value(args, "--lethality") or "balanced"
             console.print(f"[{THEME['muted']}]Hephaestus: focus={focus} depth={depth} "
-                          f"lethality={lethality}{' (dry-run)' if dry_run else ''} ...[/{THEME['muted']}]")
+                          f"lethality={lethality}"
+                          f"{' fetch-from-outputs' if fetch_from_outputs else ''}"
+                          f"{' (dry-run)' if dry_run else ''} ...[/{THEME['muted']}]")
             from hephaestus.reporting import StreamReporter
             try:
                 rec = cli_core.run_pass(focus=focus, depth=depth, dry_run=dry_run,
                                         profile="hephaestus", lethality=lethality,
+                                        fetch_from_outputs=fetch_from_outputs,
+                                        outputs_limit=outputs_limit,
                                         reporter=StreamReporter())
             except Exception as exc:  # noqa: BLE001
                 console.print(f"[{THEME['error']}]hephaestus run failed: {exc}[/{THEME['error']}]")
@@ -1273,7 +1282,56 @@ class StrikeCoreShell:
             )
         
         console.print("[bright_cyan]Avvio investigazione...[/bright_cyan]")
-        self._nlp.process(prompt)
+
+        # Capture the ENTIRE run transcript + a structured JSON snapshot into the
+        # unified dossieroutputs/ mirror (best-effort; never breaks the run).
+        try:
+            from core import dossier_output
+        except Exception:  # noqa: BLE001
+            dossier_output = None  # type: ignore[assignment]
+
+        if dossier_output is None:
+            self._nlp.process(prompt)
+            return
+
+        from datetime import datetime, timezone
+        started = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        with dossier_output.record_console(console) as cap:
+            self._nlp.process(prompt)
+        finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        try:
+            store_data = dict(self._nlp._store.data) if self._nlp._store else {}
+            dossier_json = {
+                "source": "console",
+                "target": full_name,
+                "target_id": target_id,
+                "references": references,
+                "usernames": variants,
+                "platforms": platforms,
+                "task": natural_task,
+                "started_at": started,
+                "finished_at": finished,
+                "investigation_store": store_data,
+            }
+            run_dir = dossier_output.new_run_dir(target_id, "console")
+            written = dossier_output.write_run(
+                run_dir,
+                meta={
+                    "source": "console",
+                    "target": full_name,
+                    "target_id": target_id,
+                    "task": natural_task,
+                    "started_at": started,
+                    "finished_at": finished,
+                    "references": references,
+                },
+                dossier_json=dossier_json,
+                transcript=cap.get("text", ""),
+            )
+            console.print(f"[dim]dossier output saved: {run_dir}[/dim]")
+        except Exception as exc:  # noqa: BLE001
+            console.print(f"[dim]dossier output capture skipped: {exc}[/dim]")
 
 
     def _cmd_report_gen(self, args: list) -> None:
