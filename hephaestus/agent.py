@@ -164,9 +164,10 @@ class Hephaestus:
         reporter: RunReporter | None = None,
         fetch_from_outputs: bool = False,
         outputs_limit: int = 10,
+        run_id: str | None = None,
     ) -> dict:
         """Execute one R&D run and return the validated run record."""
-        run_id = uuid.uuid4().hex[:12]
+        run_id = run_id or uuid.uuid4().hex[:12]
         started = _now()
         rep = reporter or NullReporter()
 
@@ -321,6 +322,11 @@ class Hephaestus:
                 if norm and norm["category"] not in {x["category"] for x in gaps}:
                     gaps.append(norm)
 
+        if gaps:
+            rep.info("detected " + str(len(gaps)) + " gap(s): "
+                     + ", ".join(f"{g['category']}[{g['severity']}/{g['proposed_fix_kind']}]"
+                                 for g in gaps[:6]))
+
         # 3) Research — routed call per top gap; discovery for tool-kind gaps.
         rep.phase("research")
         research: list[dict] = []
@@ -352,6 +358,11 @@ class Hephaestus:
                 "rationale": (f"Close dossier-mode gap '{g['category']}' "
                               f"({g['severity']}): {g.get('proposed_fix','build a collector')}"),
             })
+
+        if decisions:
+            rep.info(f"proposed {len(decisions)} gated tool fix(es); "
+                     f"{sum(1 for g in gaps if g['proposed_fix_kind'] != 'tool')} "
+                     f"prompt/flow/config proposal(s) for review")
 
         # 5) Write the improvement-plan artifact (human-readable; surfaced, not applied).
         plan_path = _write_improvement_plan(run_id, gaps, assessment, len(runs))

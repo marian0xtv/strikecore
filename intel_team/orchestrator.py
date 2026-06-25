@@ -94,8 +94,26 @@ class IntelTeam:
         t0 = time.monotonic()
         store_summary = self._get_store_summary()
 
+        # Live Control Room telemetry (best-effort; never breaks the pipeline).
+        try:
+            from core import agent_events
+            agent_events.install_router(self.router)
+            _rid = agent_events.start_run("intel_team", "cli", {
+                "pir_id": pir.id, "target": pir.target,
+                "question": pir.question[:200]})
+        except Exception:  # noqa: BLE001
+            agent_events = None  # type: ignore[assignment]
+            _rid = None
+
+        def _ev(event_type: str, **f):
+            if agent_events is not None:
+                agent_events.emit(event_type, run_id=_rid, **f)
+
         # 1. Routing
+        _ev("phase", phase="routing", detail="classify PIR")
         decision = await self.pir_router.classify(pir)
+        _ev("info", detail="domains: " + ",".join(
+            d.value for d in decision.all_domains))
         self._audit("pir_routed", pir, {
             "primary": [d.value for d in decision.primary_domains],
             "secondary": [d.value for d in decision.secondary_domains],
@@ -104,6 +122,8 @@ class IntelTeam:
         })
 
         # 2. Dispatch specialists in parallel
+        _ev("phase", phase="specialists",
+            detail=f"{len(decision.all_domains)} domain(s)")
         specialist_reports = await self._dispatch_specialists(
             pir,
             decision,
@@ -112,7 +132,11 @@ class IntelTeam:
             operator_notes=operator_notes,
         )
 
+        for r in specialist_reports:
+            _ev("finding", detail=f"{r.agent}: {len(r.findings)} finding(s)")
+
         # 3. Quality gate (sequential — fast, mutates in place)
+        _ev("phase", phase="quality_gate")
         for r in specialist_reports:
             self.quality_gate.apply(r)
         self._audit("quality_gate_applied", pir, {
@@ -128,6 +152,7 @@ class IntelTeam:
         })
 
         # 4. Audit / red cell
+        _ev("phase", phase="audit", detail="devil's advocate")
         audit_report = await self.audit_agent.analyze(
             pir,
             {
@@ -141,6 +166,7 @@ class IntelTeam:
         })
 
         # 5. Analyst synthesis
+        _ev("phase", phase="synthesis", detail="ACH + dossier")
         dossier = await self.analyst.synthesize(
             pir,
             specialist_reports=specialist_reports,
@@ -160,6 +186,10 @@ class IntelTeam:
             "actions": len(dossier.recommended_actions),
             "total_latency_seconds": round(time.monotonic() - t0, 2),
         })
+        _ev("decision", detail=f"dossier: {len(dossier.key_judgments)} judgment(s), "
+            f"{len(dossier.intelligence_gaps)} gap(s)")
+        if agent_events is not None:
+            agent_events.end_run("completed", run_id=_rid)
 
         return dossier
 

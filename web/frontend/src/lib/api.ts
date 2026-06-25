@@ -66,7 +66,34 @@ export type TokensByMode = {
              input_tokens?: number; output_tokens?: number; cost_micros: number }[];
 };
 
+export type CRRun = {
+  run_id: string; agent: string; surface: string; phase?: string;
+  effective_status: string; is_active: boolean; elapsed_seconds: number;
+  calls: number; input_tokens: number; output_tokens: number;
+  cost_micros: number; pending_gate_count: number; pending_gates: string[];
+  last_detail?: string; params?: Record<string, any>; last_seen?: number;
+};
+export type CRState = {
+  generated_at: string;
+  aggregates: {
+    active_agents: number; total_runs: number; llm_calls: number;
+    calls_per_min: number; cost_micros: number; pending_gates: number;
+    models_in_use: Record<string, number>;
+  };
+  runs: CRRun[];
+};
+export type CREvent = {
+  ts: string; event_type: string; detail?: string; model?: string;
+  cost_micros?: number; gate?: string; phase?: string;
+};
+export type CRDetail = { run: CRRun & { missing?: boolean }; timeline: CREvent[] };
+
 export const fmtUsd = (micros?: number | string | null) =>
   micros == null ? "—" : "$" + (Number(micros) / 1_000_000).toFixed(4);
+
+export const fmtElapsed = (s?: number) => {
+  const n = Math.floor(s || 0);
+  return `${String(Math.floor(n / 60)).padStart(2, "0")}:${String(n % 60).padStart(2, "0")}`;
+};
 
 export const fmtDate = (iso?: string) => iso ? new Date(iso).toLocaleString() : "—";

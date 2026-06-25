@@ -103,16 +103,35 @@ def decision_lines(rec: dict) -> list[str]:
 def run_pass(*, focus: str, depth: int, dry_run: bool,
              profile: str, lethality: str, reporter=None,
              fetch_from_outputs: bool = False,
-             outputs_limit: int = 10) -> dict[str, Any]:
-    """Execute one R&D pass and return the run record. Raises on agent error."""
-    from hephaestus.reporting import NullReporter
+             outputs_limit: int = 10, surface: str = "cli") -> dict[str, Any]:
+    """Execute one R&D pass and return the run record. Raises on agent error.
+
+    Every pass streams to the live event bus (core.agent_events) regardless of
+    surface, so the Control Room sees it; the optional ``reporter`` (e.g. a
+    StreamReporter) is composed on top for live stdout.
+    """
+    from hephaestus.reporting import NullReporter, EventBusReporter, MultiReporter
+    from core import agent_events
+
     router = build_router(dry_run)
+    agent_events.install_router(router)
     agent = Hephaestus(router)
-    rec = asyncio.run(agent.run(
-        focus_category=focus, depth=depth, dry_run=dry_run,
-        profile=profile, lethality=lethality,
-        fetch_from_outputs=fetch_from_outputs, outputs_limit=outputs_limit,
-        reporter=reporter or NullReporter()))
+
+    run_id = agent_events.start_run("hephaestus", surface, params={
+        "focus": focus, "depth": depth, "dry_run": dry_run, "lethality": lethality,
+        "fetch_from_outputs": fetch_from_outputs, "outputs_limit": outputs_limit})
+    final_reporter = MultiReporter([EventBusReporter(run_id),
+                                    reporter or NullReporter()])
+    try:
+        rec = asyncio.run(agent.run(
+            focus_category=focus, depth=depth, dry_run=dry_run,
+            profile=profile, lethality=lethality,
+            fetch_from_outputs=fetch_from_outputs, outputs_limit=outputs_limit,
+            reporter=final_reporter, run_id=run_id))
+    except Exception:
+        agent_events.end_run("error", run_id=run_id)
+        raise
+    agent_events.end_run(rec.get("status", "completed"), run_id=run_id)
     audit("run", rec["run_id"], {"status": rec["status"],
                                  "cost_micros": rec["totals"]["cost_usd_micros"]})
     return rec

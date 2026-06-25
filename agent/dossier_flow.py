@@ -52,6 +52,20 @@ async def build_dossier(
     session_id = pir_id
     trajectory_path = session_id
 
+    # Live Control Room telemetry (best-effort; never breaks the pipeline).
+    try:
+        from core import agent_events
+        agent_events.install_router(router)
+        _rid = agent_events.start_run("dossier_flow", "cli",
+                                      {"target": target, "pir": pir[:160]})
+    except Exception:  # noqa: BLE001
+        agent_events = None  # type: ignore[assignment]
+        _rid = None
+
+    def _ev(event_type: str, **f):
+        if agent_events is not None:
+            agent_events.emit(event_type, run_id=_rid, **f)
+
     # 1. Entity + Dossier
     target_entity_id = db.upsert_entity("person", target, display_name=target)
     dossier_id = db.create_dossier(target_entity_id or 0, pir,
@@ -83,13 +97,16 @@ async def build_dossier(
     gateway = default_gateway()
 
     # 2. Planner
+    _ev("phase", phase="planning", detail="building plan")
     plan = await planner_mod.plan(router=router, ctx=ctx, pir=pir, gateway=gateway)
+    _ev("info", detail=f"plan: {len(plan.steps)} step(s)")
     trajectory.append(session_id, "assistant",
                       {"event": "plan_emitted", "rationale": plan.rationale,
                        "n_steps": len(plan.steps),
                        "steps": [{"id": s.id, "tool": s.tool_name} for s in plan.steps]})
 
     # 3. Executor
+    _ev("phase", phase="collection", detail=f"{len(plan.steps)} step(s)")
     db.update_dossier(dossier_id, status="collecting")
     step_results = await executor_mod.execute(
         router=router, ctx=ctx, plan=plan, gateway=gateway,
@@ -97,6 +114,7 @@ async def build_dossier(
     )
 
     # 4. Synthesis — extract whichever step ran the analyst (synthesis:* family)
+    _ev("phase", phase="synthesis", detail="extracting dossier")
     db.update_dossier(dossier_id, status="synthesizing")
     raw_dossier: dict[str, Any] | None = None
     for sid, res in step_results.items():
@@ -127,6 +145,7 @@ async def build_dossier(
     dossier_cost = _dossier_cost(dossier_id)
 
     # 6. Critic
+    _ev("phase", phase="critic", detail="reviewing dossier")
     critic_out = await critic_mod.critique(
         router=router, ctx=ctx, plan_obj=plan, step_results=step_results,
         dossier=raw_dossier, dossier_cost_micros=dossier_cost,
@@ -153,6 +172,10 @@ async def build_dossier(
                    "duration_s": round(time.monotonic() - started, 2)})
 
     trajectory.close_session(session_id, dossier_id=dossier_id, cost_micros=dossier_cost)
+
+    _ev("decision", detail=f"dossier {dossier_id}: {findings_persisted} finding(s)")
+    if agent_events is not None:
+        agent_events.end_run("completed" if raw_dossier else "failed", run_id=_rid)
 
     return {
         "dossier_id": dossier_id,

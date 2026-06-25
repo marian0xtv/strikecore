@@ -67,6 +67,9 @@ _ALL_COMMANDS = [
     "/model",
     "hephaestus",
     "/hephaestus",
+    "controlroom",
+    "/controlroom",
+    "monitor",
     "tools",
     "processes",
     "kill",
@@ -100,6 +103,8 @@ _COMMAND_HELP: List[Tuple[str, str, str]] = [
     ("hephaestus", "run --focus <cat>", "Run a discovery/research/decide pass [--depth N --dry-run --lethality L]"),
     ("hephaestus", "report [run_id]", "Print a run report (latest if omitted)"),
     ("hephaestus", "approve <run_id> <H1|H3>", "Clear a pending sandbox gate"),
+    ("controlroom", "", "htop-style live control room for all agents (alias /controlroom, monitor)"),
+    ("controlroom", "--once", "Print a one-shot control-room snapshot (no TUI)"),
     ("tools", "", "List all security tools with install status"),
     ("processes", "", "Show background processes"),
     ("kill", "<pid>", "Kill a background process"),
@@ -1356,6 +1361,22 @@ class StrikeCoreShell:
         except Exception as e:
             console.print(f"[red]Graph error: {e}[/red]")
 
+    def _cmd_controlroom(self, args: list) -> None:
+        """Launch the htop-style live agent control room (Textual TUI).
+
+        Usage:
+            controlroom            interactive TUI (q quit, s sort, f active-only)
+            controlroom --once     one-shot snapshot (no TUI)
+        """
+        from cli import controlroom
+        if "--once" in args or not sys.stdin.isatty():
+            console.print(controlroom.snapshot_text())
+            return
+        try:
+            controlroom.run()
+        except KeyboardInterrupt:
+            console.print("[dim]Control room closed.[/dim]")
+
     def _cmd_dashboard(self, args: list) -> None:
         """Launch the web dashboard."""
         port = int(args[0]) if args else 5000
@@ -1412,6 +1433,9 @@ class StrikeCoreShell:
         "/model": _cmd_model_router,
         "hephaestus": _cmd_hephaestus,
         "/hephaestus": _cmd_hephaestus,
+        "controlroom": _cmd_controlroom,
+        "/controlroom": _cmd_controlroom,
+        "monitor": _cmd_controlroom,
         "tools": _cmd_tools,
         "processes": _cmd_processes,
         "kill": _cmd_kill,

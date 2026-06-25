@@ -30,6 +30,7 @@ bin/intel-team.py (CLI)
 |------|---------|
 | `~/.strikecore/config.toml`              | Main config (TOML, multi-provider AI). Env vars in `.env` override. |
 | `~/.strikecore/audit/YYYY-MM-DD.jsonl`   | Daily audit chain (SHA-256 per intel_team entry). **Legal evidence.** |
+| `~/.strikecore/events/`                  | NEW — live agent event bus (`<date>.jsonl` + `active/<run_id>.json` heartbeats) powering the Control Room (`core/agent_events.py`). Telemetry only, NOT the audit chain. |
 | `~/.strikecore/logs/`                    | Runtime logs |
 | `~/.strikecore/ig_session`               | Instagram authenticated session |
 | `~/strikecore-data/investigations/`      | JSON per target (14 categories, see `core/investigation_store.py`) |
@@ -389,6 +390,19 @@ It shares `hephaestus/cli_core.py` with `bin/hephaestus.py` (the CLI remains the
 scripting/cron path). All LLM calls route through the GR3 router (`hephaestus`
 profile). The legacy dashboard (`osint_agent/dashboard/app.py`) now embeds a
 read-only **/hephaestus** page (parity with the `web/` React dashboard).
+
+**Control Room (NEW 2026-06-25).** Every agent run — Hephaestus, intel_team, the
+Hermes `dossier_flow`, and the console NLP engine — emits live lifecycle/phase/cost
+events to a unified file bus (`core/agent_events.py`, under `~/.strikecore/events/`).
+A per-call cost hook on `ProviderRouter` (`on_call`) captures spend for every agent
+automatically. The **`controlroom`** console command (aliases `/controlroom`,
+`monitor`) opens an htop-style Textual TUI (header metrics + sortable agent table +
+Hephaestus drill-down: research → gaps → fixes → pending H1/H3 gates); `controlroom
+--once` prints a snapshot. The same bus feeds a **Control Room** page in BOTH
+dashboards (Flask `/control-room` + React `/control-room`) via
+`/api/control-room/state` and `/api/control-room/run/<id>`. The bus is telemetry
+only — additive and failure-isolated, separate from the §3.8 audit chain; GR3 is
+untouched (no model selection or LLM calls added). See `docs/CONTROL_ROOM.md`.
 
 **Dossier autoimprove (NEW 2026-06-24).** Every dossier run (console `dossier`,
 `bin/intel-team.py`, `bin/agent-dossier.py`) now writes a uniform per-run capture

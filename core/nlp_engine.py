@@ -365,6 +365,17 @@ class NaturalLanguageEngine:
         if not self._ensure_router():
             return
 
+        # Live Control Room telemetry (best-effort; never breaks the turn).
+        try:
+            from core import agent_events
+            agent_events.install_router(self._router)
+            self._bus = agent_events
+            self._bus_run = agent_events.start_run(
+                "console", "console", {"input": user_input[:160]})
+        except Exception:  # noqa: BLE001
+            self._bus = None
+            self._bus_run = None
+
         self._phase = 1
         # Auto-detect target from input and load/create investigation store
         if not self._store:
@@ -394,13 +405,16 @@ class NaturalLanguageEngine:
                           "and never contradict verified intelligence."
             })
 
+        self._bus_emit("phase", phase="reasoning", detail="AI turn")
         try:
             response = self._call_ai(messages)
         except KeyboardInterrupt:
             console.print("\n[dim]Cancelled.[/dim]")
+            self._bus_end("cancelled")
             return
         except Exception as exc:
             console.print(f"[bold red]AI error:[/bold red] {exc}")
+            self._bus_end("error")
             return
 
         content = response.content.strip()
@@ -422,12 +436,35 @@ class NaturalLanguageEngine:
             ))
 
         if actions:
+            self._bus_emit("phase", phase="collection",
+                           detail=f"{len(actions)} action(s)")
             results = self._execute_actions(actions)
             if results:
                 self._auto_continue(results)
-        
+
         tokens = f"{response.input_tokens}+{response.output_tokens}"
         console.print(f"\n[dim]tokens: {tokens} | provider: {response.provider}:{response.model}[/dim]")
+        self._bus_end("completed")
+
+    # --- Control Room live telemetry helpers (best-effort) ----------------
+    def _bus_emit(self, event_type: str, **fields) -> None:
+        bus = getattr(self, "_bus", None)
+        run = getattr(self, "_bus_run", None)
+        if bus is not None and run:
+            try:
+                bus.emit(event_type, run_id=run, **fields)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _bus_end(self, status: str) -> None:
+        bus = getattr(self, "_bus", None)
+        run = getattr(self, "_bus_run", None)
+        if bus is not None and run:
+            try:
+                bus.end_run(status, run_id=run)
+            except Exception:  # noqa: BLE001
+                pass
+        self._bus_run = None
 
     def _extract_actions(self, content: str) -> List[Dict[str, str]]:
         patterns = [
@@ -494,6 +531,7 @@ class NaturalLanguageEngine:
                 continue
 
             console.print(f"\n[bold bright_green]▶ [{tool}][/bold bright_green] [cyan]{cmd}[/cyan]\n")
+            self._bus_emit("finding", detail=f"tool {tool}: {cmd[:120]}")
 
             # Auto-wrap with proxy if tool is rate-limited
             exec_cmd = cmd

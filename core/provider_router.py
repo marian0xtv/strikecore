@@ -194,6 +194,10 @@ class ProviderRouter:
         self.policy: ModelPolicy = policy_from_settings(settings)
         self._dry_run: bool = bool(settings.get("ai.model_policy.dry_run", False))
         self.call_log: list[CallRecord] = []
+        # Optional live telemetry hook: called with each CallRecord as it lands.
+        # core.agent_events.install_router() wires this to the live event bus so
+        # the Control Room sees per-call cost across every agent. Best-effort.
+        self.on_call: Any = None
 
     # ------------------------------------------------------------------
     # Cost-aware routing API
@@ -217,6 +221,15 @@ class ProviderRouter:
 
     def reset_log(self) -> None:
         self.call_log = []
+
+    def _log_call(self, record: CallRecord) -> None:
+        """Append a CallRecord to the in-memory ledger and fire on_call (if set)."""
+        self.call_log.append(record)
+        if self.on_call is not None:
+            try:
+                self.on_call(record)
+            except Exception:  # noqa: BLE001 — telemetry never breaks a call
+                pass
 
     def run_cost(self) -> dict[str, Any]:
         """Aggregate the in-memory call log into a per-mode cost summary."""
@@ -449,7 +462,7 @@ class ProviderRouter:
             )
         except Exception:  # noqa: BLE001
             cost = 0
-        self.call_log.append(CallRecord(
+        self._log_call(CallRecord(
             task_type=task_type or "", model=response.model or model,
             routing_reason=reason, input_tokens=response.input_tokens,
             output_tokens=response.output_tokens, cost_micros=cost, dry_run=False,
@@ -481,7 +494,7 @@ class ProviderRouter:
             cost = estimate_cost_micros(model, in_tokens, out_tokens)
         except Exception:  # noqa: BLE001
             cost = 0
-        self.call_log.append(CallRecord(
+        self._log_call(CallRecord(
             task_type=task_type or "", model=model, routing_reason=reason,
             input_tokens=in_tokens, output_tokens=out_tokens,
             cost_micros=cost, dry_run=True,
@@ -595,7 +608,7 @@ class ProviderRouter:
             cost = estimate_cost_micros(model, in_tokens, out_tokens)
         except Exception:  # noqa: BLE001
             cost = 0
-        self.call_log.append(CallRecord(
+        self._log_call(CallRecord(
             task_type=task_type or "", model=model, routing_reason=reason,
             input_tokens=in_tokens, output_tokens=out_tokens,
             cost_micros=cost, dry_run=False,

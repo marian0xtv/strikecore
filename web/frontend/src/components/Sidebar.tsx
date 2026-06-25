@@ -8,6 +8,7 @@ const items = [
   { to: "/improvements", label: "Improvements",  icon: "▲" },
   { to: "/cost",         label: "Cost / Tokens", icon: "$" },
   { to: "/hephaestus",   label: "Hephaestus",    icon: "⚒" },
+  { to: "/control-room", label: "Control Room",  icon: "◉" },
   { to: "/console",      label: "Console",       icon: "❯" },
   { to: "/settings",     label: "Settings",      icon: "⚙" },
 ];

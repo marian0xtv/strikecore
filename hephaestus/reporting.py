@@ -93,3 +93,101 @@ class StreamReporter(RunReporter):
         else:
             self._w(f"    {g} deferred -> pending "
                     f"(clear later: hephaestus approve <run_id> {g}).\n")
+
+
+class EventBusReporter(RunReporter):
+    """Forwards Hephaestus run events to the live event bus (core.agent_events).
+
+    Silent on its own (it never prompts and always defers gates -> returns False);
+    compose it with a StreamReporter via MultiReporter to keep live stdout AND feed
+    the Control Room. Per-token deltas are buffered and summarised on stream_end to
+    keep the event log compact.
+    """
+
+    def __init__(self, run_id: str) -> None:
+        self.run_id = run_id
+        self._buf: list[str] = []
+
+    def _emit(self, event_type: str, **fields) -> None:
+        try:
+            from core import agent_events
+            agent_events.emit(event_type, run_id=self.run_id, **fields)
+        except Exception:  # never let telemetry break a run
+            pass
+
+    def phase(self, name: str, detail: str = "") -> None:
+        self._emit("phase", phase=name, detail=(detail or name))
+
+    def info(self, message: str) -> None:
+        self._emit("info", detail=message)
+
+    def stream_start(self, label: str, model: str) -> None:
+        self._buf = []
+        self._emit("stream_start", model=model, detail=label)
+
+    def stream_delta(self, text: str) -> None:
+        # buffer only; cost lands via the router on_call hook, summary on end
+        self._buf.append(text)
+
+    def stream_end(self) -> None:
+        summary = "".join(self._buf).strip().replace("\n", " ")[:160]
+        self._buf = []
+        self._emit("stream_end", detail=summary)
+
+    def request_gate(self, gate: dict) -> bool:
+        self._emit("gate_request", gate=gate.get("gate", "?"),
+                   detail=gate.get("reason", ""))
+        return False  # never approves; defers to a prompting reporter
+
+    def gate_result(self, gate: dict, approved: bool,
+                    register_cmd: str | None) -> None:
+        self._emit("gate_result", gate=gate.get("gate", "?"), approved=approved,
+                   detail=(register_cmd or ""))
+
+
+class MultiReporter(RunReporter):
+    """Fan-out reporter: forwards every hook to each child reporter in order.
+
+    request_gate returns True if ANY child approves; children are called in list
+    order, so place the EventBusReporter FIRST (emit the pending gate) and a
+    prompting StreamReporter AFTER it (which blocks on the operator).
+    """
+
+    def __init__(self, reporters) -> None:
+        self._rs = [r for r in reporters if r is not None]
+
+    def _fan(self, method: str, *args) -> None:
+        for r in self._rs:
+            try:
+                getattr(r, method)(*args)
+            except Exception:  # one reporter must not break the others
+                pass
+
+    def phase(self, name: str, detail: str = "") -> None:
+        self._fan("phase", name, detail)
+
+    def info(self, message: str) -> None:
+        self._fan("info", message)
+
+    def stream_start(self, label: str, model: str) -> None:
+        self._fan("stream_start", label, model)
+
+    def stream_delta(self, text: str) -> None:
+        self._fan("stream_delta", text)
+
+    def stream_end(self) -> None:
+        self._fan("stream_end")
+
+    def gate_result(self, gate: dict, approved: bool,
+                    register_cmd: str | None) -> None:
+        self._fan("gate_result", gate, approved, register_cmd)
+
+    def request_gate(self, gate: dict) -> bool:
+        approved = False
+        for r in self._rs:
+            try:
+                if r.request_gate(gate):
+                    approved = True
+            except Exception:
+                pass
+        return approved

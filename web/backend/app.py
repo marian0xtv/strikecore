@@ -405,6 +405,31 @@ def hephaestus_runs(limit: int = Query(20, ge=1, le=100)) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Control Room — live agent telemetry (shared file event bus, no DB)
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/control-room/state", tags=["control-room"])
+def control_room_state(limit: int = Query(50, ge=1, le=200)) -> dict[str, Any]:
+    """Live aggregates + recent/active agent runs (core.agent_events bus)."""
+    try:
+        from core import agent_events
+        return agent_events.control_room_state(limit)
+    except Exception as exc:  # noqa: BLE001
+        return {"aggregates": {}, "runs": [], "error": str(exc)}
+
+
+@app.get("/api/control-room/run/{run_id}", tags=["control-room"])
+def control_room_run(run_id: str) -> dict[str, Any]:
+    """Drill-down: heartbeat + full event timeline for one run."""
+    try:
+        from core import agent_events
+        return agent_events.run_detail(run_id)
+    except Exception as exc:  # noqa: BLE001
+        return {"run": {"run_id": run_id, "missing": True}, "timeline": [], "error": str(exc)}
+
+
+# ---------------------------------------------------------------------------
 # Settings
 # ---------------------------------------------------------------------------
 

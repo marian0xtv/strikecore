@@ -149,6 +149,9 @@ SIDEBAR = '''<body>
     <a href="/hephaestus" class="nav-item %(active_hephaestus)s">
       <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M11.42 15.17L17.25 21A2.652 2.652 0 0021 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 11-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 004.486-6.336l-3.276 3.277a3.004 3.004 0 01-2.25-2.25l3.276-3.276a4.5 4.5 0 00-6.336 4.486c.091 1.076-.071 2.264-.904 2.95l-.102.085m-1.745 1.437L5.909 7.5H4.5L2.25 3.75l1.5-1.5L7.5 4.5v1.409l4.26 4.26m-1.745 1.437l1.745-1.437m6.615 8.206L15.75 15.75M4.867 19.125h.008v.008h-.008v-.008z"/></svg>
       Hephaestus</a>
+    <a href="/control-room" class="nav-item %(active_control_room)s">
+      <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 006 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0118 16.5h-2.25m-7.5 0h7.5m-7.5 0l-1 3m8.5-3l1 3m0 0l.5 1.5m-.5-1.5h-9.5m0 0l-.5 1.5M9 11.25v1.5M12 9v3.75m3-6v6"/></svg>
+      Control Room</a>
 
     <div class="nav-section" style="margin-top:24px">Gateway Telefonico</div>
     <a href="/voip" class="nav-item %(active_voip)s">
@@ -273,6 +276,7 @@ def _render(title, content, active=""):
         "active_tunnel": _a("tunnel"),
         "active_voip": _a("voip"),
         "active_hephaestus": _a("hephaestus"),
+        "active_control_room": _a("control_room"),
         **status,
     }
     return Response(
@@ -676,6 +680,113 @@ def hephaestus_view():
     {body}
     '''
     return _render("Hephaestus", content, "hephaestus")
+
+
+@app.route('/api/control-room/state')
+def api_control_room_state():
+    """Live aggregates + recent/active agent runs (shared core.agent_events bus)."""
+    try:
+        from core import agent_events
+        return jsonify(agent_events.control_room_state(80))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"aggregates": {}, "runs": [], "error": str(exc)})
+
+
+@app.route('/api/control-room/run/<run_id>')
+def api_control_room_run(run_id):
+    """Drill-down timeline for one run."""
+    try:
+        from core import agent_events
+        return jsonify(agent_events.run_detail(run_id))
+    except Exception as exc:  # noqa: BLE001
+        return jsonify({"run": {"run_id": run_id, "missing": True},
+                        "timeline": [], "error": str(exc)})
+
+
+@app.route('/control-room')
+def control_room():
+    """htop-style live control room — polls /api/control-room/* every 2s."""
+    content = '''
+    <h1 class="text-xl font-bold text-white mb-1">Control Room</h1>
+    <p class="text-xs text-gray-500 mb-4">Live agent activity &amp; metrics · auto-refresh 2s ·
+       deep drill-down on Hephaestus (research &rarr; gaps &rarr; fixes &rarr; gates)</p>
+
+    <div id="metrics" class="grid grid-cols-2 lg:grid-cols-6 gap-3 mb-5"></div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 glass-bright p-3 overflow-auto">
+        <table class="w-full text-xs" id="runs-tbl">
+          <thead class="text-gray-400 border-b border-white/10">
+            <tr><th class="text-left py-1">run</th><th class="text-left">agent</th>
+            <th class="text-left">surface</th><th class="text-left">status</th>
+            <th class="text-left">phase</th><th class="text-right">elapsed</th>
+            <th class="text-right">calls</th><th class="text-right">cost</th>
+            <th class="text-right">gates</th></tr></thead>
+          <tbody id="runs-body"></tbody>
+        </table>
+      </div>
+      <div class="glass-bright p-3 overflow-auto" id="detail">
+        <div class="text-gray-500 text-xs">Select a run for details.</div>
+      </div>
+    </div>
+
+    <script>
+    var SEL = null;
+    var SCOL = {running:'text-green-400',paused:'text-yellow-400',completed:'text-cyan-400',
+                error:'text-red-400',failed:'text-red-400',stale:'text-fuchsia-400',cancelled:'text-gray-500'};
+    function usd(m){return '$'+((m||0)/1e6).toFixed(4);}
+    function el(s){s=Math.floor(s||0);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');}
+    function metric(label,val,cls){return '<div class="glass p-2"><div class="text-[10px] text-gray-400">'+label+
+        '</div><div class="text-lg font-bold '+(cls||'text-white')+'">'+val+'</div></div>';}
+    function poll(){
+      fetch('/api/control-room/state').then(function(r){return r.json();}).then(function(d){
+        var a=d.aggregates||{};
+        document.getElementById('metrics').innerHTML =
+          metric('Active agents',a.active_agents||0,'text-green-400')+
+          metric('Runs',a.total_runs||0)+metric('LLM calls',a.llm_calls||0)+
+          metric('Calls/min',a.calls_per_min||0,'text-cyan-400')+
+          metric('Cost',usd(a.cost_micros),'text-yellow-400')+
+          metric('Pending gates',a.pending_gates||0,(a.pending_gates?'text-red-400':'text-white'));
+        var rows='';
+        (d.runs||[]).forEach(function(r){
+          var st=r.effective_status||'?';
+          rows+='<tr class="border-b border-white/5 cursor-pointer hover:bg-white/5" onclick="sel(\\''+r.run_id+'\\')">'+
+            '<td class="py-1 font-mono">'+r.run_id.substring(0,8)+'</td><td>'+r.agent+'</td>'+
+            '<td class="text-gray-400">'+(r.surface||'')+'</td>'+
+            '<td class="'+(SCOL[st]||'')+'">'+st+'</td><td class="text-gray-300">'+(r.phase||'')+'</td>'+
+            '<td class="text-right text-gray-400">'+el(r.elapsed_seconds)+'</td>'+
+            '<td class="text-right">'+(r.calls||0)+'</td><td class="text-right text-yellow-400">'+usd(r.cost_micros)+'</td>'+
+            '<td class="text-right '+(r.pending_gate_count?'text-red-400':'text-gray-500')+'">'+(r.pending_gate_count||0)+'</td></tr>';
+        });
+        document.getElementById('runs-body').innerHTML = rows || '<tr><td colspan="9" class="text-gray-500 py-3">No agent runs yet.</td></tr>';
+        if(SEL) detail(SEL);
+      }).catch(function(){});
+    }
+    function sel(id){SEL=id;detail(id);}
+    function detail(id){
+      fetch('/api/control-room/run/'+id).then(function(r){return r.json();}).then(function(d){
+        var run=d.run||{};var st=run.effective_status||'?';
+        var h='<div class="text-sm font-bold text-white mb-1">'+(run.agent||'?')+
+          ' <span class="text-gray-500 text-[10px]">['+(run.surface||'')+']</span> '+
+          '<span class="'+(SCOL[st]||'')+'">'+st+'</span></div>'+
+          '<div class="text-[10px] text-gray-400 mb-2">'+el(run.elapsed_seconds)+' · '+(run.calls||0)+
+          ' call(s) · <span class="text-yellow-400">'+usd(run.cost_micros)+'</span></div>';
+        if((run.pending_gates||[]).length) h+='<div class="text-[10px] text-red-400 mb-2">PENDING GATES: '+run.pending_gates.join(', ')+'</div>';
+        h+='<div class="text-[10px] text-gray-500 uppercase mb-1">timeline</div>';
+        (d.timeline||[]).slice(-40).forEach(function(e){
+          var det=e.detail||'';
+          if(e.event_type==='llm_call') det=(e.model||'')+'  '+usd(e.cost_micros);
+          h+='<div class="text-[10px] mb-0.5"><span class="text-gray-500">'+String(e.ts||'').substring(11,19)+
+             '</span> <span class="text-cyan-400">'+e.event_type+'</span> <span class="text-gray-300">'+
+             String(det).substring(0,90)+'</span></div>';
+        });
+        document.getElementById('detail').innerHTML=h;
+      }).catch(function(){});
+    }
+    poll(); setInterval(poll, 2000);
+    </script>
+    '''
+    return _render("Control Room", content, "control_room")
 
 
 @app.route('/infrastructure')
