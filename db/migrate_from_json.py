@@ -36,7 +36,7 @@ log = logging.getLogger("migrate_from_json")
 
 INVESTIGATIONS_DIR = Path(os.environ.get(
     "STRIKECORE_INVESTIGATIONS",
-    "/home/atlas/strikecore-data/investigations",
+    str(Path.home() / "strikecore-data" / "investigations"),
 ))
 
 
@@ -297,9 +297,9 @@ def main() -> int:
         return 0
 
     # Backup whole directory once per run
-    backup_dir = Path("/home/atlas/argus-intelligence/strikecore/.backup") / (
-        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-json-pre-migration"
-    )
+    backup_dir = Path(os.environ.get(
+        "STRIKECORE_BACKUP_DIR", str(Path.home() / ".strikecore" / "backup")
+    )) / (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-json-pre-migration")
     backup_dir.mkdir(parents=True, exist_ok=True)
     for f in INVESTIGATIONS_DIR.glob("*.json"):
         shutil.copy2(f, backup_dir / f.name)

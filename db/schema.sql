@@ -417,3 +417,26 @@ CREATE TRIGGER entity_touch BEFORE UPDATE ON entity
 DROP TRIGGER IF EXISTS improvement_touch ON improvement;
 CREATE TRIGGER improvement_touch BEFORE UPDATE ON improvement
     FOR EACH ROW EXECUTE FUNCTION touch_updated_at();
+
+-- ============================================================================
+-- investigation — document store for the per-target dossier (JSONB swap)
+-- ============================================================================
+-- Replaces the file-backed core/investigation_store.py persistence. The rich
+-- nested shape (identity / emails / phones / profiles / organizations /
+-- locations / social_graph / breaches / documents / timeline / devices /
+-- notes / raw_evidence / phase_log) lives intact in `data`. This makes
+-- Postgres the single cross-container state plane (backend reader + toolbox
+-- writer) without sharing a mutable file over a bind mount. Document/photo
+-- BLOBS still live on disk (referenced by path inside `data`).
+CREATE TABLE IF NOT EXISTS investigation (
+    target_id   TEXT PRIMARY KEY,
+    data        JSONB NOT NULL,
+    updated     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+-- jsonb_path_ops GIN: cheap containment queries on sub-fields later if needed.
+CREATE INDEX IF NOT EXISTS investigation_data_gin
+    ON investigation USING gin (data jsonb_path_ops);
+
+INSERT INTO schema_version (version, notes) VALUES
+    ('2026.06.29.B.investigation_jsonb', 'Containerization: investigation JSONB document store (single state plane)')
+ON CONFLICT (version) DO NOTHING;
