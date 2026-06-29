@@ -35,7 +35,7 @@ COPY . /app
 
 # Agent runtime + redis/psycopg (db extra). --break-system-packages: Kali's
 # python is externally-managed; this is a dedicated container.
-RUN pip3 install --break-system-packages ".[db]"
+RUN pip3 install --break-system-packages ".[db]" psycopg2-binary
 
 # Extend the toolchain via the repo's own installers (best-effort: some tools
 # need network/manual steps; the capability audit T10 pins the final set).

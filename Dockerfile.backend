@@ -16,8 +16,10 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY . /app
-# Base deps + api (fastapi/uvicorn) + db (psycopg/redis) extras. No tools.
-RUN pip install ".[api,db]" \
+# Base deps + api (fastapi/uvicorn) + db (sqlalchemy/redis) extras. No tools.
+# psycopg2-binary explicitly: the code uses psycopg2 (web/backend/db.py,
+# core/pg.py), while the db extra ships psycopg3. Both fine; we need v2.
+RUN pip install ".[api,db]" psycopg2-binary \
     && apt-get purge -y build-essential libpq-dev && apt-get autoremove -y
 
 # Fixed non-root identity = host operator UID (decision I3). HOME=/data is bind-
