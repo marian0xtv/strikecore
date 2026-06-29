@@ -33,12 +33,19 @@ MAX_DELIVERIES = int(os.environ.get("STRIKECORE_JOBS_MAX_DELIVERIES", "3"))
 
 
 def client() -> "redis.Redis":
-    """Connect using REDIS_* env. ``decode_responses`` so payloads are str."""
+    """Connect using REDIS_* env. ``decode_responses`` so payloads are str.
+
+    socket_keepalive + health_check_interval keep a long-lived worker connection
+    from going stale (the periodic blocking XREADGROUP otherwise risks a
+    server-side read timeout on an idle socket).
+    """
     return redis.Redis(
         host=os.environ.get("REDIS_HOST", "127.0.0.1"),
         port=int(os.environ.get("REDIS_PORT", "6379")),
         password=os.environ.get("REDIS_PASSWORD") or None,
         decode_responses=True,
+        socket_keepalive=True,
+        health_check_interval=30,
     )
 
 
@@ -78,9 +85,9 @@ def reclaim_stale(r: "redis.Redis", consumer: str, min_idle_ms: int = 600_000, c
     Returns list of (id, job_dict). Poison entries (delivered > MAX_DELIVERIES)
     are dead-lettered and acked instead of being handed back."""
     out = []
-    _cursor, entries, _deleted = r.xautoclaim(
-        JOBS_STREAM, GROUP, consumer, min_idle_time=min_idle_ms, count=count
-    )
+    res = r.xautoclaim(JOBS_STREAM, GROUP, consumer, min_idle_time=min_idle_ms, count=count)
+    # redis-py >=4.2 returns (cursor, entries, deleted); older returns (cursor, entries).
+    entries = res[1] if isinstance(res, (list, tuple)) and len(res) >= 2 else []
     for msg_id, fields in entries:
         job = _decode(fields)
         pending = r.xpending_range(JOBS_STREAM, GROUP, min=msg_id, max=msg_id, count=1)

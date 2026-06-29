@@ -28,7 +28,10 @@ import logging
 import os
 import socket
 import sys
+import time
 from pathlib import Path
+
+import redis
 
 # Project root on path (so core/, agent/, config/ import inside the container)
 _ROOT = Path(__file__).resolve().parent.parent
@@ -111,25 +114,32 @@ async def _dispatch(job: dict) -> None:
 
 def main() -> int:
     consumer = f"{socket.gethostname()}-{os.getpid()}"
-    r = job_queue.client()
-    job_queue.ensure_group(r)
-    log.info("toolbox worker up: consumer=%s stream=%s group=%s",
-             consumer, job_queue.JOBS_STREAM, job_queue.GROUP)
-
-    idle = 0
+    # Outer loop: a transient redis error reconnects instead of crashing the
+    # process (a long-running worker must survive a redis blip, not restart-loop).
     while True:
-        # Periodically reclaim entries abandoned by dead/stuck workers.
-        if idle % 12 == 0:
-            for msg_id, job in job_queue.reclaim_stale(r, consumer):
-                _process(r, msg_id, job)
-        batch = job_queue.claim(r, consumer, block_ms=5000)
-        if not batch:
-            idle += 1
-            continue
-        idle = 0
-        for msg_id, job in batch:
-            _process(r, msg_id, job)
-    return 0
+        try:
+            r = job_queue.client()
+            job_queue.ensure_group(r)
+            log.info("toolbox worker up: consumer=%s stream=%s group=%s",
+                     consumer, job_queue.JOBS_STREAM, job_queue.GROUP)
+            idle = 0
+            while True:
+                # Periodically reclaim entries abandoned by dead/stuck workers.
+                if idle % 12 == 0:
+                    for msg_id, job in job_queue.reclaim_stale(r, consumer):
+                        _process(r, msg_id, job)
+                batch = job_queue.claim(r, consumer, block_ms=5000)
+                if not batch:
+                    idle += 1
+                    continue
+                idle = 0
+                for msg_id, job in batch:
+                    _process(r, msg_id, job)
+        except redis.exceptions.RedisError as exc:
+            log.warning("redis error in worker loop — reconnecting in 3s: %s", exc)
+            time.sleep(3)
+        except KeyboardInterrupt:
+            return 0
 
 
 def _process(r: "job_queue.redis.Redis", msg_id: str, job: dict) -> None:
