@@ -31,7 +31,26 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-LOG_DIR = Path.home() / "strikecore-data" / "ip_logs"
+def _data_home() -> Path:
+    """Resolve the data home for StrikeCore artifacts.
+
+    Honors ``SUDO_USER`` so tools that must run under ``sudo`` (e.g.
+    ``sudo call-sniffer``, which needs raw-capture privileges) still write to
+    the invoking operator's home instead of ``/root``. Without this, a
+    successful capture lands in ``/root/strikecore-data`` and the dashboard
+    (running as the operator) never sees it.
+    """
+    sudo_user = os.environ.get("SUDO_USER")
+    if sudo_user and sudo_user != "root":
+        try:
+            import pwd
+            return Path(pwd.getpwnam(sudo_user).pw_dir)
+        except (KeyError, ImportError):
+            pass
+    return Path.home()
+
+
+LOG_DIR = _data_home() / "strikecore-data" / "ip_logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # ── Shared exclude lists (server/infrastructure IPs to filter out) ──
