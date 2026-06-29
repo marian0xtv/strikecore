@@ -75,6 +75,28 @@ process_ref() {
         base="$EMPTY_TREE"  # new branch: diff against empty tree
     fi
 
+    # --- container deploy (decisions I5 + I9) ---------------------------------
+    # Orthogonal to the tool-gate below: bring the compose stack up to the new
+    # tree. The slim backend always rebuilds (fast); the multi-GB toolbox is
+    # PREBUILT and only rebuilt when shared runtime code (core/agent/web) changed
+    # — otherwise it would run stale shared code against a fresh backend.
+    if command -v docker >/dev/null 2>&1; then
+        local shared_changed
+        shared_changed="$(git diff --name-only "$base" "$newrev" -- core agent web 2>/dev/null)"
+        say "deploy: compose up -d --build backend"
+        ( cd "$WORK_TREE" && docker compose up -d --build backend ) >>"$AUDIT_LOG" 2>&1 \
+            || say "WARNING: backend deploy failed (see $AUDIT_LOG)"
+        if [ -n "$shared_changed" ]; then
+            say "deploy: shared core/agent/web changed — rebuilding toolbox (avoid stale code)"
+            ( cd "$WORK_TREE" && docker compose up -d --build toolbox ) >>"$AUDIT_LOG" 2>&1 \
+                || say "WARNING: toolbox rebuild failed (see $AUDIT_LOG)"
+        fi
+        ( cd "$WORK_TREE" && docker compose up -d ) >>"$AUDIT_LOG" 2>&1 || true
+        audit "container_deploy shared_changed=$([ -n "$shared_changed" ] && echo yes || echo no)"
+    else
+        say "docker not found — skipping container deploy (tool registration still runs)"
+    fi
+
     local changed
     changed="$(git diff --name-only "$base" "$newrev" -- "$TOOLS_DIR" 2>/dev/null)"
     if [ -z "$changed" ]; then
