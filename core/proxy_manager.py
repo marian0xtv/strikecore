@@ -10,18 +10,23 @@ Provides:
 
 from __future__ import annotations
 
-import asyncio
+import logging
 import os
 import socket
 import subprocess
 import time
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Optional
+from dataclasses import dataclass
 
-TOR_CONTROL_PORT = 9051
-TOR_SOCKS_PORT = 9050
-TOR_PASSWORD = ""  # Will be set up with HashedControlPassword
+log = logging.getLogger("core.proxy_manager")
+
+# Tor runs as a container on the bridge net (decision I7). Host/port + control
+# password come from the environment; defaults work for a host-native tor too.
+TOR_HOST = os.environ.get("TOR_HOST", "127.0.0.1")
+TOR_CONTROL_PORT = int(os.environ.get("TOR_CONTROL_PORT", "9051"))
+TOR_SOCKS_PORT = int(os.environ.get("TOR_SOCKS_PORT", "9050"))
+# HashedControlPassword auth: the cleartext password is shared via env to both
+# the tor image and this client. Cookie auth can't cross containers, so it's gone.
+TOR_CONTROL_PASSWORD = os.environ.get("TOR_CONTROL_PASSWORD", "")
 
 
 @dataclass
@@ -39,62 +44,37 @@ class ProxyManager:
     def __init__(self) -> None:
         self._current_ip: str = ""
         self._rotation_count: int = 0
-        self._setup_tor_control()
-
-    def _setup_tor_control(self) -> None:
-        """Ensure Tor control port is accessible for NEWNYM signals."""
-        torrc = Path("/etc/tor/torrc")
-        if not torrc.exists():
-            return
-        content = torrc.read_text()
-        needs_update = False
-        if "ControlPort 9051" not in content:
-            needs_update = True
-        if "CookieAuthentication 1" not in content:
-            needs_update = True
-        if needs_update:
-            try:
-                subprocess.run(
-                    ["sudo", "bash", "-c",
-                     'grep -q "ControlPort 9051" /etc/tor/torrc || '
-                     'echo -e "\\nControlPort 9051\\nCookieAuthentication 1" >> /etc/tor/torrc && '
-                     'systemctl reload tor'],
-                    capture_output=True, timeout=10
-                )
-            except Exception:
-                pass
+        # No host setup: the tor container ships its own torrc with
+        # ControlPort + HashedControlPassword. (Decision I7: host sudo/systemctl
+        # and torrc-write paths removed.)
 
     def rotate_identity(self) -> bool:
-        """Send NEWNYM signal to Tor to get a new circuit/IP."""
+        """Send NEWNYM to the Tor container for a new circuit/IP.
+
+        Authenticates with HashedControlPassword over the control port. Failures
+        are SURFACED (logged at WARNING) rather than silently swallowed — a silent
+        rotation failure means OSINT tools keep hitting rate limits / risk
+        deanonymisation with the operator none the wiser.
+        """
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.settimeout(5)
-                s.connect(("127.0.0.1", TOR_CONTROL_PORT))
-                s.send(b"AUTHENTICATE\r\n")
+                s.connect((TOR_HOST, TOR_CONTROL_PORT))
+                s.send(f'AUTHENTICATE "{TOR_CONTROL_PASSWORD}"\r\n'.encode())
                 resp = s.recv(256)
                 if b"250" not in resp:
-                    # Try cookie auth
-                    cookie_path = "/run/tor/control.authcookie"
-                    if os.path.exists(cookie_path):
-                        cookie = open(cookie_path, "rb").read()
-                        s.send(f'AUTHENTICATE "{cookie.hex()}"\r\n'.encode())
-                        resp = s.recv(256)
+                    log.warning("tor AUTHENTICATE rejected (check TOR_CONTROL_PASSWORD): %r", resp)
+                    return False
                 s.send(b"SIGNAL NEWNYM\r\n")
                 resp = s.recv(256)
                 if b"250" in resp:
                     self._rotation_count += 1
                     time.sleep(3)  # Wait for new circuit
                     return True
-        except Exception:
-            # Fallback: restart Tor service
-            try:
-                subprocess.run(["sudo", "systemctl", "restart", "tor"],
-                             capture_output=True, timeout=15)
-                time.sleep(5)
-                self._rotation_count += 1
-                return True
-            except Exception:
-                pass
+                log.warning("tor SIGNAL NEWNYM not acknowledged: %r", resp)
+        except OSError as exc:
+            log.warning("tor control connection to %s:%s failed: %s",
+                        TOR_HOST, TOR_CONTROL_PORT, exc)
         return False
 
     def get_current_ip(self) -> str:
