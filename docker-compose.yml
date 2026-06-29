@@ -1,12 +1,27 @@
-# StrikeCore — restructure services
+# StrikeCore — single `docker compose up` platform bring-up.
 #
-# Postgres 16 + pgvector for entity/dossier/trace/token-ledger/memory-embedding storage.
-# Redis 7 for job queue + LISTEN/NOTIFY pub-sub for live WebSocket trace streaming.
-# Caddy is intentionally NOT here — Phase C adds it once the frontend builds.
+# Topology (eng-review locked):
+#   postgres  pgvector/pg16   single state plane (dossiers, traces, investigation JSONB)
+#   redis     job queue (Redis Streams) — noeviction so in-flight jobs aren't dropped
+#   tor       SOCKS/Control for OSINT egress (HashedControlPassword)
+#   backend   thin FastAPI (:8765) — serves API/WS + React dist, enqueues jobs, NO tools
+#   toolbox   Kali + agent runtime + ~157 OSINT tools — Redis worker, authoritative gate
+#   frontend-build  one-shot vite build -> web/frontend/dist (profile: build)
+#   voip      Asterisk PBX (profile: voip, host network) — off by default
 #
-# Host-port mapping deliberately avoids conflicts with the sister project
-# `worldwideview-db-1` already occupying 5432 on this host. Strikecore uses
-# 5433 / 6379. See .env for credentials (chmod 600, git-ignored).
+# State is bind-mounted from the host operator's home (decision I3): set
+# APP_UID/APP_GID in .env to `id -u`/`id -g` so files stay operator-owned.
+# Dev profile (vite dev server + reload) lives in docker-compose.override.yml.
+
+x-app-env: &app-env
+  HOME: /data
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  TOR_HOST: tor
+  TOR_SOCKS_PORT: "9050"
+  TOR_CONTROL_PORT: "9051"
 
 services:
 
@@ -18,26 +33,27 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-strikecore}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-strikecore}
-      # Surface real model context windows in queries / dashboards
       PGTZ: UTC
     ports:
       - "127.0.0.1:5433:5432"
     volumes:
       - ./.docker-volumes/pg:/var/lib/postgresql/data
-      - ./db/initdb:/docker-entrypoint-initdb.d:ro
+      # Wire the real schema into first-boot init (fixes the empty-DB bug).
+      - ./db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-strikecore} -d ${POSTGRES_DB:-strikecore}"]
       interval: 10s
       timeout: 5s
       retries: 5
       start_period: 30s
-    networks:
-      - strikecore-internal
+    networks: [strikecore-internal]
 
   redis:
     image: redis:7-alpine
     container_name: strikecore-redis
     restart: unless-stopped
+    # noeviction: the Streams job keyspace must NOT be evicted under memory
+    # pressure (allkeys-lru would silently drop in-flight jobs).
     command:
       - redis-server
       - --requirepass
@@ -47,7 +63,7 @@ services:
       - --maxmemory
       - "512mb"
       - --maxmemory-policy
-      - allkeys-lru
+      - noeviction
     ports:
       - "127.0.0.1:6379:6379"
     volumes:
@@ -58,8 +74,96 @@ services:
       timeout: 5s
       retries: 5
       start_period: 10s
-    networks:
-      - strikecore-internal
+    networks: [strikecore-internal]
+
+  tor:
+    build:
+      context: .
+      dockerfile: Dockerfile.tor
+    container_name: strikecore-tor
+    restart: unless-stopped
+    environment:
+      TOR_CONTROL_PASSWORD: ${TOR_CONTROL_PASSWORD}
+    # Internal only — never published to the host.
+    networks: [strikecore-internal]
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+      args:
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+    image: strikecore-backend:latest
+    container_name: strikecore-backend
+    restart: unless-stopped
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    env_file: [.env]
+    environment: *app-env
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      # Operator-owned state (decision I3). HOME=/data inside the container.
+      - ${HOME}/.strikecore:/data/.strikecore
+      - ${HOME}/strikecore-data:/data/strikecore-data
+      # Built SPA — backend serves dist/ at / when present.
+      - ./web/frontend/dist:/app/web/frontend/dist:ro
+    networks: [strikecore-internal]
+
+  toolbox:
+    build:
+      context: .
+      dockerfile: Dockerfile.toolbox
+      args:
+        APP_UID: ${APP_UID:-1000}
+        APP_GID: ${APP_GID:-1000}
+    image: strikecore-toolbox:latest
+    container_name: strikecore-toolbox
+    restart: unless-stopped
+    user: "${APP_UID:-1000}:${APP_GID:-1000}"
+    env_file: [.env]
+    environment: *app-env
+    # Raw-socket tools (nmap -sS, masscan). The capability audit (T10,
+    # docs/CAPABILITY_AUDIT.md) decides whether any subset additionally needs
+    # network_mode: host like the voip service.
+    cap_add: [NET_RAW, NET_ADMIN]
+    depends_on:
+      postgres: {condition: service_healthy}
+      redis: {condition: service_healthy}
+      tor: {condition: service_started}
+    volumes:
+      - ${HOME}/.strikecore:/data/.strikecore
+      - ${HOME}/strikecore-data:/data/strikecore-data
+    networks: [strikecore-internal]
+
+  # One-shot frontend build -> web/frontend/dist (run: `docker compose --profile build run --rm frontend-build`)
+  frontend-build:
+    image: node:20-bookworm-slim
+    profiles: [build]
+    working_dir: /app/web/frontend
+    volumes:
+      - ./web/frontend:/app/web/frontend
+    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm run build"]
+    networks: [strikecore-internal]
+
+  # VoIP/Asterisk — host network + caps; off by default. (`--profile voip`)
+  voip:
+    build:
+      context: ./voip
+    image: strikecore-pbx:latest
+    profiles: [voip]
+    container_name: strikecore-pbx
+    restart: unless-stopped
+    network_mode: host
+    cap_add: [NET_ADMIN, NET_RAW]
+    env_file: [.env]
+    volumes:
+      - ./voip/config:/etc/asterisk:ro
+      - ./voip/recordings:/var/spool/asterisk/recording
+      - ./voip/pcap:/var/log/asterisk/pcap
 
 networks:
   strikecore-internal:

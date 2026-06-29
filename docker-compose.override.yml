@@ -1,0 +1,33 @@
+# Dev override (auto-loaded by `docker compose up`). Source-mounts + reload +
+# a live vite dev server. For prod-style bring-up, ignore this file:
+#   docker compose -f docker-compose.yml up -d
+services:
+
+  backend:
+    # Live reload against mounted source.
+    command: ["python", "-m", "uvicorn", "web.backend.app:app",
+              "--host", "0.0.0.0", "--port", "8765", "--reload"]
+    volumes:
+      - ./:/app
+      - ${HOME}/.strikecore:/data/.strikecore
+      - ${HOME}/strikecore-data:/data/strikecore-data
+
+  toolbox:
+    # Live source so worker changes don't need an image rebuild during dev.
+    volumes:
+      - ./:/app
+      - ${HOME}/.strikecore:/data/.strikecore
+      - ${HOME}/strikecore-data:/data/strikecore-data
+
+  # Vite dev server (HMR) — proxies /api + /ws to backend:8765 (vite.config.ts).
+  frontend:
+    image: node:20-bookworm-slim
+    container_name: strikecore-frontend-dev
+    working_dir: /app/web/frontend
+    command: ["sh", "-c", "corepack enable && pnpm install && pnpm run dev -- --host 0.0.0.0"]
+    ports:
+      - "127.0.0.1:5174:5174"
+    volumes:
+      - ./web/frontend:/app/web/frontend
+    depends_on: [backend]
+    networks: [strikecore-internal]

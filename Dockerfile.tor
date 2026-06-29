@@ -1,0 +1,12 @@
+# Minimal Tor container for StrikeCore (decision I7). torrc is generated at
+# startup with a HashedControlPassword derived from $TOR_CONTROL_PASSWORD.
+FROM alpine:3.20
+
+RUN apk add --no-cache tor
+
+COPY docker/tor-entrypoint.sh /tor-entrypoint.sh
+RUN chmod +x /tor-entrypoint.sh
+
+# Entrypoint runs as root to write torrc; tor itself drops to the `tor` user
+# via `User tor` in the generated config.
+ENTRYPOINT ["/tor-entrypoint.sh"]

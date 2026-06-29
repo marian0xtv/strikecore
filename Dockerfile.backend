@@ -1,0 +1,33 @@
+# Thin StrikeCore API/backend image — FastAPI + Postgres + Redis, NO OSINT tools.
+# The agent runtime + the ~157 OSINT binaries live in the toolbox image; this
+# image only serves the API/WebSocket and enqueues jobs (decisions I5, I6).
+FROM python:3.11-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HOME=/data \
+    PYTHONPATH=/app
+
+WORKDIR /app
+
+# libpq for psycopg2 at runtime; build-essential only while installing.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libpq5 build-essential libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY . /app
+# Base deps + api (fastapi/uvicorn) + db (psycopg/redis) extras. No tools.
+RUN pip install ".[api,db]" \
+    && apt-get purge -y build-essential libpq-dev && apt-get autoremove -y
+
+# Fixed non-root identity = host operator UID (decision I3). HOME=/data is bind-
+# mounted so Path.home() resolves to operator-owned state on the host.
+ARG APP_UID=1000
+ARG APP_GID=1000
+RUN groupadd -g ${APP_GID} app 2>/dev/null || true \
+    && useradd -u ${APP_UID} -g ${APP_GID} -d /data -M app 2>/dev/null || true \
+    && mkdir -p /data && chown -R ${APP_UID}:${APP_GID} /data /app
+
+USER ${APP_UID}:${APP_GID}
+EXPOSE 8765
+CMD ["python", "-m", "uvicorn", "web.backend.app:app", "--host", "0.0.0.0", "--port", "8765"]
