@@ -3206,13 +3206,29 @@ def voip_panel():
       if(!num)return;
       var method=document.querySelector('input[name="cm"]:checked').value;
       if(method==='sniffer'){
-        var label=num.replace(/[^0-9]/g,'');
-        var cmd='sudo call-sniffer -i enp87s0 -t '+label+' -d 90 --save-pcap';
-        clearLog();log('SNIFFER MODE - esegui nel terminale:');log(cmd,'log-ok');
-        log('Poi chiama '+num+' su WhatsApp/Telegram');
-        try{navigator.clipboard.writeText(cmd);}catch(e){}
+        var label=num.replace(/[^a-zA-Z0-9_]/g,'')||'call';
+        clearLog();log('SNIFFER MODE — avvio cattura locale...');
         statusEl.textContent='sniffing...';statusEl.style.color='#f44';
-        startPoll(label);return;
+        fetch('/api/gateway/sniff',{method:'POST',headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({label:label,duration:90})
+        }).then(function(r){return r.json();}).then(function(d){
+          if(d.error){
+            log('Avvio automatico fallito: '+d.error,'log-err');
+            if(d.manual_cmd){log('Esegui a mano nel terminale:');log(d.manual_cmd,'log-ok');try{navigator.clipboard.writeText(d.manual_cmd);}catch(e){}}
+            startPoll(label);return;
+          }
+          if(!d.started){
+            log('Avvio automatico non disponibile (serve sudo). Esegui nel terminale:');
+            log(d.manual_cmd,'log-ok');
+            try{navigator.clipboard.writeText(d.manual_cmd);}catch(e){}
+            log('Poi chiama '+num+' su WhatsApp/Telegram');
+            startPoll(label);return;
+          }
+          log('Cattura avviata su '+d.iface+' per '+d.duration+'s','log-ok');
+          log('Ora chiama '+num+' su WhatsApp/Telegram','log-ok');
+          startPoll(label);
+        }).catch(function(){log('Errore di rete','log-err');statusEl.textContent='errore';statusEl.style.color='#f44';});
+        return;
       }
       clearLog();log('Chiamata '+method.toUpperCase()+' verso '+num+'...');
       statusEl.textContent='calling...';statusEl.style.color='#ff0';
@@ -3617,6 +3633,81 @@ def api_gateway_wa_check():
         return jsonify({"error": "timeout", "number": number}), 500
     except Exception as e:
         return jsonify({"error": str(e), "number": number}), 500
+
+
+def _can_capture():
+    """True if this process can run dumpcap/tshark without sudo (root, or
+    dumpcap carries cap_net_raw / is executable by us)."""
+    try:
+        if os.geteuid() == 0:
+            return True
+    except Exception:
+        pass
+    dumpcap = shutil.which("dumpcap") or "/usr/bin/dumpcap"
+    try:
+        caps = subprocess.run(["getcap", dumpcap], capture_output=True,
+                              text=True, timeout=3).stdout
+        if "cap_net_raw" in caps:
+            return True
+    except Exception:
+        pass
+    return os.access(dumpcap, os.X_OK)
+
+
+def _detect_capture_iface():
+    """Best-effort pick of the primary capture interface (skip lo/docker/veth/br)."""
+    try:
+        out = subprocess.check_output(["ip", "-o", "link", "show", "up"], text=True)
+        for line in out.split("\n"):
+            if ":" not in line:
+                continue
+            name = line.split(":")[1].strip().split("@")[0]
+            if name and name not in ("lo", "docker0") and not name.startswith(("veth", "br-", "docker")):
+                return name
+    except Exception:
+        pass
+    return "eth0"
+
+
+@app.route('/api/gateway/sniff', methods=['POST'])
+def api_gateway_sniff():
+    """Launch the call sniffer (WhatsApp/Telegram P2P IP capture) as a background
+    process. Used by the VoIP panel's 'Call Sniffer' mode so the capture can be
+    started straight from the UI instead of a manual terminal command.
+
+    Capture needs raw-socket privilege: where dumpcap has cap_net_raw (or is
+    group/other-executable), this runs without sudo; otherwise the response
+    carries a manual command (with sudo) to run by hand.
+    """
+    data = request.get_json() or {}
+    label = re.sub(r"[^a-zA-Z0-9_]", "", str(data.get("label", ""))) or "call"
+    try:
+        duration = max(5, min(int(data.get("duration", 90)), 600))
+    except Exception:
+        duration = 90
+    iface = re.sub(r"[^a-zA-Z0-9_.\-]", "", str(data.get("iface", ""))) or _detect_capture_iface()
+
+    repo = Path(__file__).resolve().parent.parent.parent
+    script = repo / "bin" / "call-sniffer.py"
+    if not script.exists():
+        return jsonify({"error": f"call-sniffer.py non trovato in {script}"}), 500
+    cmd = [sys.executable, str(script), "-i", iface, "-t", label,
+           "-d", str(duration), "--save-pcap"]
+    manual_cmd = "sudo " + " ".join(cmd)
+
+    # Only auto-launch when this process can actually capture without sudo
+    # (root, or dumpcap usable by us). Otherwise hand back the sudo command so
+    # the operator runs it by hand — the atlas case, where the dashboard user
+    # lacks raw-capture privilege.
+    if not _can_capture():
+        return jsonify({"started": False, "needs_sudo": True, "label": label,
+                        "iface": iface, "duration": duration, "manual_cmd": manual_cmd})
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as e:
+        return jsonify({"error": str(e), "manual_cmd": manual_cmd}), 500
+    return jsonify({"started": True, "label": label, "iface": iface,
+                    "duration": duration, "manual_cmd": manual_cmd})
 
 
 @app.route('/api/gateway/phonebook')
