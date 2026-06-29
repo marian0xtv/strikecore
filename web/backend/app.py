@@ -480,29 +480,38 @@ class ConsoleSubmission(BaseModel):
 
 @app.post("/api/console/dossier", tags=["console"], status_code=202)
 async def submit_dossier(body: ConsoleSubmission) -> dict[str, Any]:
-    """Kick off a dossier build in the background; return a tracking id."""
-    from config.settings import get_settings
-    from core.provider_router import ProviderRouter
-    from agent.dossier_flow import build_dossier
+    """Enqueue a dossier build for the toolbox worker; return a tracking id.
 
-    settings = get_settings()
-    router = ProviderRouter(settings)
+    The backend is tool-free (decision I6): it does NOT run the agent in-process.
+    It enqueues a job onto the Redis stream; the Kali toolbox worker claims it,
+    runs build_dossier (which has the OSINT tools), and streams traces back over
+    the existing Postgres LISTEN/NOTIFY channel that /ws/traces already serves.
+    """
+    from core import job_queue
 
-    async def _run() -> None:
-        try:
-            await build_dossier(
-                router=router, target=body.target, pir=body.pir,
-                operator_notes=body.operator_notes, constraints=body.constraints,
-                investigation_store=None,
-            )
-        except Exception as exc:  # noqa: BLE001
-            log.exception("background dossier failed: %s", exc)
+    job = {
+        "type": "dossier",
+        "target": body.target,
+        "pir": body.pir,
+        "operator_notes": body.operator_notes,
+        "constraints": body.constraints,
+    }
 
-    asyncio.create_task(_run())
+    def _enqueue() -> str:
+        r = job_queue.client()
+        return job_queue.enqueue(r, job)
+
+    try:
+        job_id = await asyncio.to_thread(_enqueue)
+    except Exception as exc:  # noqa: BLE001
+        log.exception("failed to enqueue dossier job: %s", exc)
+        raise HTTPException(status_code=503, detail="job queue unavailable") from exc
+
     return {
         "accepted": True,
         "target": body.target,
-        "message": "Dossier build started — watch /api/dossiers (latest row) and /ws/traces for live updates.",
+        "job_id": job_id,
+        "message": "Dossier build enqueued — watch /api/dossiers (latest row) and /ws/traces for live updates.",
     }
 
 
