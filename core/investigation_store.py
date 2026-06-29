@@ -102,11 +102,15 @@ class InvestigationStore:
         self.data = self._load()
 
     def _load(self) -> dict:
-        if self.path.exists():
-            try:
-                return json.loads(self.path.read_text())
-            except Exception:
-                pass
+        # Postgres is the authoritative store (JSONB swap). The nested document
+        # shape is unchanged — it lives intact in the `investigation.data` JSONB
+        # column, so all ~20 methods below and their 18 consumers are untouched.
+        from core import pg
+        with pg.cursor() as cur:
+            cur.execute("SELECT data FROM investigation WHERE target_id = %s", (self.target_id,))
+            row = cur.fetchone()
+        if row and row.get("data") is not None:
+            return row["data"]
         return {
             "target_id": self.target_id,
             "created": datetime.now().isoformat(),
@@ -129,7 +133,18 @@ class InvestigationStore:
 
     def save(self):
         self.data["updated"] = datetime.now().isoformat()
-        self.path.write_text(json.dumps(self.data, indent=2, default=str))
+        from core import pg
+        from psycopg2.extras import Json
+        # Round-trip through json(default=str) so non-JSON types (datetime etc.)
+        # serialise exactly as the legacy file store did before hitting JSONB.
+        payload = json.loads(json.dumps(self.data, default=str))
+        with pg.cursor() as cur:
+            cur.execute(
+                "INSERT INTO investigation (target_id, data, updated) "
+                "VALUES (%s, %s, NOW()) "
+                "ON CONFLICT (target_id) DO UPDATE SET data = EXCLUDED.data, updated = NOW()",
+                (self.target_id, Json(payload)),
+            )
 
     # ── Adders (accumulate, never overwrite) ──
 
