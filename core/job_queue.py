@@ -71,8 +71,15 @@ def _decode(fields: dict[str, str]) -> dict[str, Any]:
 
 
 def claim(r: "redis.Redis", consumer: str, block_ms: int = 5000, count: int = 1):
-    """Claim new (never-delivered) entries. Returns list of (id, job_dict)."""
-    resp = r.xreadgroup(GROUP, consumer, {JOBS_STREAM: ">"}, count=count, block=block_ms)
+    """Claim new (never-delivered) entries. Returns list of (id, job_dict).
+
+    A blocking XREADGROUP that elapses with no new messages can surface as
+    redis TimeoutError (redis-py caps the socket read at the BLOCK value); that
+    is a normal empty poll, not an error — return [] so the worker loops on."""
+    try:
+        resp = r.xreadgroup(GROUP, consumer, {JOBS_STREAM: ">"}, count=count, block=block_ms)
+    except redis.exceptions.TimeoutError:
+        return []
     out = []
     for _stream, entries in resp or []:
         for msg_id, fields in entries:
@@ -85,7 +92,10 @@ def reclaim_stale(r: "redis.Redis", consumer: str, min_idle_ms: int = 600_000, c
     Returns list of (id, job_dict). Poison entries (delivered > MAX_DELIVERIES)
     are dead-lettered and acked instead of being handed back."""
     out = []
-    res = r.xautoclaim(JOBS_STREAM, GROUP, consumer, min_idle_time=min_idle_ms, count=count)
+    try:
+        res = r.xautoclaim(JOBS_STREAM, GROUP, consumer, min_idle_time=min_idle_ms, count=count)
+    except redis.exceptions.TimeoutError:
+        return []
     # redis-py >=4.2 returns (cursor, entries, deleted); older returns (cursor, entries).
     entries = res[1] if isinstance(res, (list, tuple)) and len(res) >= 2 else []
     for msg_id, fields in entries:
