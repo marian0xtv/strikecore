@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -43,26 +44,30 @@ def connect() -> psycopg2.extensions.connection:
     return conn
 
 
-_CONN: psycopg2.extensions.connection | None = None
+# Thread-local cached connection: psycopg2 connections are NOT thread-safe, and
+# the Flask dashboard + FastAPI threadpool serve requests on multiple threads.
+# Each thread gets its own connection so concurrent requests don't corrupt a
+# shared one (the bug where the dashboard list silently returned []).
+_local = threading.local()
 
 
 def _conn() -> psycopg2.extensions.connection:
-    global _CONN
-    if _CONN is None or _CONN.closed:
-        _CONN = connect()
-    return _CONN
+    c = getattr(_local, "conn", None)
+    if c is None or c.closed:
+        c = connect()
+        _local.conn = c
+    return c
 
 
 @contextmanager
 def cursor(dict_rows: bool = True) -> Iterator[Any]:
-    """Yield a cursor on the cached connection. Resets the connection on error
-    so a dropped socket (container restart) self-heals on the next call."""
-    global _CONN
+    """Yield a cursor on this thread's cached connection. Resets the connection
+    on error so a dropped socket (container restart) self-heals on next call."""
     factory = RealDictCursor if dict_rows else None
     try:
         c = _conn().cursor(cursor_factory=factory)
     except psycopg2.Error:
-        _CONN = None
+        _local.conn = None
         c = _conn().cursor(cursor_factory=factory)
     try:
         yield c
@@ -71,7 +76,7 @@ def cursor(dict_rows: bool = True) -> Iterator[Any]:
             _conn().close()
         except Exception:
             pass
-        _CONN = None
+        _local.conn = None
         raise
     finally:
         try:

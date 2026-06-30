@@ -309,34 +309,46 @@ def _cloak_for_crawlers():
                         mimetype="text/html")
 
 
+def _iter_investigations():
+    """Yield (target_id, data) from the Postgres JSONB investigation store,
+    newest first. Replaces the legacy STORE_DIR.glob('*.json') file reads so the
+    dashboard list matches the store the worker now writes to (Postgres)."""
+    try:
+        from core import pg
+        with pg.cursor() as cur:
+            cur.execute("SELECT target_id, data FROM investigation ORDER BY updated DESC")
+            return [(r["target_id"], r["data"]) for r in cur.fetchall()]
+    except Exception:
+        return []
+
+
 @app.route('/')
 def index():
     """C2 Dashboard — Overview with stats and recent activity."""
     # Gather stats
-    inv_count = len(list(STORE_DIR.glob("*.json"))) if STORE_DIR.exists() else 0
+    _invs = _iter_investigations()
+    inv_count = len(_invs)
     total_emails = total_phones = total_profiles = total_connections = 0
     investigations = []
 
-    if STORE_DIR.exists():
-        for f in sorted(STORE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                d = json.loads(f.read_text())
-                ne = len(d.get("emails", {}))
-                np_ = len(d.get("phones", {}))
-                npro = len(d.get("profiles", {}))
-                nc = len(d.get("social_graph", []))
-                total_emails += ne
-                total_phones += np_
-                total_profiles += npro
-                total_connections += nc
-                investigations.append({
-                    "id": f.stem,
-                    "name": (d.get("identity", {}).get("names", []) or [f.stem])[0],
-                    "emails": ne, "phones": np_, "profiles": npro, "connections": nc,
-                    "updated": d.get("updated", "")[:16],
-                })
-            except:
-                pass
+    for tid, d in _invs:
+        try:
+            ne = len(d.get("emails", {}))
+            np_ = len(d.get("phones", {}))
+            npro = len(d.get("profiles", {}))
+            nc = len(d.get("social_graph", []))
+            total_emails += ne
+            total_phones += np_
+            total_profiles += npro
+            total_connections += nc
+            investigations.append({
+                "id": tid,
+                "name": (d.get("identity", {}).get("names", []) or [tid])[0],
+                "emails": ne, "phones": np_, "profiles": npro, "connections": nc,
+                "updated": (d.get("updated", "") or "")[:16],
+            })
+        except Exception:
+            pass
 
     # Tool performance
     tool_count = 0
@@ -435,20 +447,18 @@ def index():
 def investigations():
     """List all investigations with management options."""
     rows = ""
-    if STORE_DIR.exists():
-        for f in sorted(STORE_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True):
-            try:
-                d = json.loads(f.read_text())
-                name = (d.get("identity", {}).get("names", []) or [f.stem])[0]
-                ne = len(d.get("emails", {}))
-                np_ = len(d.get("phones", {}))
-                npro = len(d.get("profiles", {}))
-                nc = len(d.get("social_graph", []))
-                updated = d.get("updated", "")[:16]
-                phases = len(d.get("phase_log", []))
-                rows += f'''<tr class="table-row border-b border-white/5">
-                  <td class="py-3 px-4"><a href="/target/{f.stem}" class="text-cyan-400 hover:text-cyan-300 font-medium">{name}</a>
-                    <div class="text-[10px] text-gray-600">{f.stem}</div></td>
+    for tid, d in _iter_investigations():
+        try:
+            name = (d.get("identity", {}).get("names", []) or [tid])[0]
+            ne = len(d.get("emails", {}))
+            np_ = len(d.get("phones", {}))
+            npro = len(d.get("profiles", {}))
+            nc = len(d.get("social_graph", []))
+            updated = (d.get("updated", "") or "")[:16]
+            phases = len(d.get("phase_log", []))
+            rows += f'''<tr class="table-row border-b border-white/5">
+                  <td class="py-3 px-4"><a href="/target/{tid}" class="text-cyan-400 hover:text-cyan-300 font-medium">{name}</a>
+                    <div class="text-[10px] text-gray-600">{tid}</div></td>
                   <td class="py-3 px-4 text-center"><span class="badge bg-blue-500/20 text-blue-400">{ne}</span></td>
                   <td class="py-3 px-4 text-center"><span class="badge bg-purple-500/20 text-purple-400">{np_}</span></td>
                   <td class="py-3 px-4 text-center"><span class="badge bg-green-500/20 text-green-400">{npro}</span></td>
@@ -456,13 +466,13 @@ def investigations():
                   <td class="py-3 px-4 text-center text-gray-500">{phases}</td>
                   <td class="py-3 px-4 text-[10px] text-gray-500">{updated}</td>
                   <td class="py-3 px-4 text-right">
-                    <a href="/target/{f.stem}" class="text-cyan-500 hover:text-cyan-300 text-[10px] mr-2">View</a>
-                    <a href="/target/{f.stem}/manage" class="text-yellow-500 hover:text-yellow-300 text-[10px] mr-2">Manage</a>
-                    <a href="/target/{f.stem}/map" class="text-green-500 hover:text-green-300 text-[10px]">Map</a>
+                    <a href="/target/{tid}" class="text-cyan-500 hover:text-cyan-300 text-[10px] mr-2">View</a>
+                    <a href="/target/{tid}/manage" class="text-yellow-500 hover:text-yellow-300 text-[10px] mr-2">Manage</a>
+                    <a href="/target/{tid}/map" class="text-green-500 hover:text-green-300 text-[10px]">Map</a>
                   </td>
                 </tr>'''
-            except:
-                pass
+        except Exception:
+            pass
 
     content = f'''
     <div class="flex items-center justify-between mb-6">
@@ -1048,6 +1058,13 @@ def reset_target(tid):
     jp = STORE_DIR / f"{tid}.json"
     if jp.exists():
         jp.unlink()
+    # Remove from the Postgres JSONB store (the authoritative store the list reads).
+    try:
+        from core import pg
+        with pg.cursor() as cur:
+            cur.execute("DELETE FROM investigation WHERE target_id = %s", (tid,))
+    except Exception:
+        pass
     return redirect("/investigations")
 
 

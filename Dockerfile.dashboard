@@ -6,6 +6,8 @@ FROM strikecore-toolbox:latest
 
 USER root
 RUN pip3 install --break-system-packages flask werkzeug
+# Overlay current source on the toolbox base so the dashboard tracks repo changes.
+COPY . /app
 USER 1000:1000
 
 EXPOSE 5000
