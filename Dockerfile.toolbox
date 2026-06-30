@@ -18,15 +18,22 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 WORKDIR /app
 
-# Curated apt core (broadly available in Kali repos). The repo installers below
-# extend this to the full ~157-tool set.
+# OSINT toolset (apt metapackage). Override at build for more coverage, e.g.:
+#   --build-arg TOOLSET="kali-tools-information-gathering kali-tools-web kali-tools-passwords"
+ARG TOOLSET="kali-tools-information-gathering"
+
+# Core runtime + a `sudo` shim. install_osint_mega.sh and other scripts call
+# `sudo`; we're already root in the build, so the shim just execs the args.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-venv pipx \
+    python3 python3-pip python3-venv pipx golang-go \
     proxychains4 tor ca-certificates git curl wget jq \
-    nmap masscan dnsutils whois exiftool \
-    nikto whatweb sqlmap dnsrecon \
+    nmap masscan dnsutils whois exiftool nikto whatweb sqlmap dnsrecon \
     libpq-dev build-essential \
+    && printf '#!/bin/sh\nexec "$@"\n' > /usr/local/bin/sudo && chmod +x /usr/local/bin/sudo \
     && rm -rf /var/lib/apt/lists/*
+
+# OSINT metapackage — large; its own layer so it caches independently of code.
+RUN apt-get update && apt-get install -y ${TOOLSET} && rm -rf /var/lib/apt/lists/*
 
 # proxychains routes through the tor *container* (decision I7).
 COPY docker/proxychains4.conf /etc/proxychains4.conf
@@ -37,10 +44,12 @@ COPY . /app
 # python is externally-managed; this is a dedicated container.
 RUN pip3 install --break-system-packages ".[db]" psycopg2-binary
 
-# Extend the toolchain via the repo's own installers (best-effort: some tools
-# need network/manual steps; the capability audit T10 pins the final set).
-RUN bash install_tools.sh || true \
-    && bash install_osint_mega.sh || true
+# Python/git/go OSINT tools (sherlock, holehe, maigret, theHarvester, dnstwist,
+# instaloader, gallery-dl, ...) into /data/.local/bin (HOME=/data, on PATH).
+# install_osint_mega.sh is `set -uo` (no -e) so partial failures don't abort.
+# install_tools.sh is intentionally skipped: it uses `set -e` + sudo and the apt
+# tools it lists are already covered by the Kali metapackage above.
+RUN bash install_osint_mega.sh || true
 
 # Fixed non-root identity = host operator UID (decision I3), HOME=/data bind-mounted.
 ARG APP_UID=1000
