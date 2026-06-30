@@ -1,0 +1,12 @@
+# Legacy StrikeCore Flask dashboard — the operator UI (osint_agent/dashboard).
+# Built ON TOP of the toolbox image so it already has the full agent runtime,
+# the OSINT tools, and the source at /app. We only add Flask/werkzeug. Tiny
+# layer on the shared toolbox base → fast incremental build.
+FROM strikecore-toolbox:latest
+
+USER root
+RUN pip3 install --break-system-packages flask werkzeug
+USER 1000:1000
+
+EXPOSE 5000
+CMD ["python3", "osint_agent/dashboard/app.py"]
