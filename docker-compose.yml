@@ -146,7 +146,7 @@ services:
     working_dir: /app/web/frontend
     volumes:
       - ./web/frontend:/app/web/frontend
-    command: ["sh", "-c", "corepack enable && pnpm install --frozen-lockfile && pnpm run build"]
+    command: ["sh", "-c", "corepack enable && corepack prepare pnpm@9.15.9 --activate && pnpm install --frozen-lockfile && pnpm run build"]
     networks: [strikecore-internal]
 
   # VoIP/Asterisk — host network + caps; off by default. (`--profile voip`)
