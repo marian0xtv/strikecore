@@ -1,0 +1,33 @@
+# Keep the build context small and avoid container-owned/secret files.
+.git
+.gitignore
+
+# Runtime volumes (postgres/redis data — container-owned, permission-denied on send)
+.docker-volumes/
+
+# Secrets (compose injects .env at runtime via env_file; never bake into the image)
+.env
+.secrets-inventory.md
+
+# In-repo venvs (huge, not needed in the image)
+.venv/
+venv/
+strikecore/
+strikecore-env/
+
+# Python caches
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Node / frontend build artifacts (frontend dist is bind-mounted at runtime)
+node_modules/
+web/frontend/node_modules/
+web/frontend/.vite/
+web/frontend/dist/
+
+# Local-only / generated
+.backup/
+reports/
+*.log
+.claude-implementation.log
