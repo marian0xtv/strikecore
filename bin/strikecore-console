@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# StrikeCore interactive console for the dockerized stack (HOST-side launcher).
+#
+# WHY THIS EXISTS
+#   The compose stack splits responsibilities on purpose:
+#     - strikecore-backend  : thin FastAPI, NO OSINT tools (Dockerfile.backend)
+#     - strikecore-toolbox  : Kali + agent runtime + ~157 OSINT tools + worker
+#   Running the `strikecore` REPL inside the backend gives you a crippled shell
+#   (every tool "missing", LLM calls firing from the wrong container). This
+#   launcher always drops you into the TOOLBOX, which is the container that
+#   actually holds the toolchain — so the CLI works exactly like a bare-metal
+#   install, tools included.
+#
+# USAGE
+#   strikecore-console            # interactive REPL (default)
+#   strikecore-console --check    # one-shot health/tool check, then exit
+#   strikecore-console --setup    # re-run onboarding wizard
+#   strikecore-console -- <args>  # anything after -- is passed to `strikecore`
+#
+# ENV
+#   SC_CONTAINER   override the toolbox container name (default: strikecore-toolbox)
+#
+# The host user is not in the `docker` group here, so this falls back to
+# `sudo docker` automatically. To drop the sudo prompt entirely (recommended
+# for daily CLI use):  sudo usermod -aG docker "$USER"  then re-login.
+set -euo pipefail
+
+CONTAINER="${SC_CONTAINER:-strikecore-toolbox}"
+
+# Resolve how to talk to the docker daemon: rootless if we can, else sudo.
+if docker info >/dev/null 2>&1; then
+  DOCKER=(docker)
+elif command -v sudo >/dev/null 2>&1; then
+  DOCKER=(sudo docker)
+else
+  echo "strikecore-console: cannot reach the docker daemon (no docker-group access, no sudo)." >&2
+  exit 1
+fi
+
+# The toolbox must be up — the console shares its live config/Redis/Postgres view.
+if ! "${DOCKER[@]}" ps --format '{{.Names}}' 2>/dev/null | grep -qx "$CONTAINER"; then
+  echo "strikecore-console: container '$CONTAINER' is not running." >&2
+  echo "  Bring the stack up first:" >&2
+  echo "    docker compose -f docker-compose.yml up -d" >&2
+  exit 1
+fi
+
+# Strip a leading `--` separator if present, so `-- <args>` reads naturally.
+if [ "${1:-}" = "--" ]; then shift; fi
+
+# -it for a real TTY REPL; run as the toolbox's app user (default), same
+# identity as the worker so bind-mounted state stays operator-owned.
+exec "${DOCKER[@]}" exec -it "$CONTAINER" strikecore "$@"

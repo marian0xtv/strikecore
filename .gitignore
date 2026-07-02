@@ -99,6 +99,7 @@ credentials*
 # ── Investigation outputs (PII — must stay in ~/strikecore-data) ──
 /*.txt
 !/requirements.txt
+!/docker_stack_turnon.txt
 /aspide66*
 /bernantonio*
 /bungaro*

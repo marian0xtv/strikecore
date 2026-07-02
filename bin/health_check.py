@@ -64,11 +64,17 @@ class HealthCheck:
         })
 
     def check_tor(self):
-        socks = _check_socket("127.0.0.1", 9050)
-        self._add("Tor SOCKS5 (9050)", socks,
+        # Docker-aware: under compose, Tor lives in a sibling container reached
+        # via TOR_HOST (e.g. "tor"), not localhost. Fall back to 127.0.0.1 for
+        # bare-metal installs. Same for the SOCKS/Control ports.
+        host = os.environ.get("TOR_HOST", "127.0.0.1")
+        socks_port = int(os.environ.get("TOR_SOCKS_PORT", "9050"))
+        ctrl_port = int(os.environ.get("TOR_CONTROL_PORT", "9051"))
+        socks = _check_socket(host, socks_port)
+        self._add(f"Tor SOCKS5 ({host}:{socks_port})", socks,
                    "Running" if socks else "Not running", critical=True)
-        ctrl = _check_socket("127.0.0.1", 9051)
-        self._add("Tor Control (9051)", ctrl,
+        ctrl = _check_socket(host, ctrl_port)
+        self._add(f"Tor Control ({host}:{ctrl_port})", ctrl,
                    "Accessible" if ctrl else "Not accessible")
 
     def check_tools(self):
@@ -96,15 +102,19 @@ class HealthCheck:
                    "Configured" if exists else "Not set (~/.strikecore/ig_session)")
 
     def check_ollama(self):
+        # Docker-aware: honor OLLAMA_HOST/OLLAMA_PORT when Ollama runs elsewhere
+        # (sibling container or host gateway); default to localhost bare-metal.
+        host = os.environ.get("OLLAMA_HOST", "127.0.0.1")
+        port = int(os.environ.get("OLLAMA_PORT", "11434"))
         if self.quick:
-            running = _check_socket("127.0.0.1", 11434)
+            running = _check_socket(host, port)
             self._add("Ollama", running,
                        "Port open" if running else "Not running")
             return
         try:
             data = json.loads(
                 urllib.request.urlopen(
-                    "http://localhost:11434/api/tags", timeout=3
+                    f"http://{host}:{port}/api/tags", timeout=3
                 ).read()
             )
             models = [m["name"] for m in data.get("models", [])]

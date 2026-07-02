@@ -1,0 +1,198 @@
+===============================================================================
+ StrikeCore on Docker — Full Operations Guide
+===============================================================================
+
+This is the authoritative runbook for bringing up, operating, and using
+StrikeCore as a Docker Compose stack — including the interactive CLI console,
+not just the dashboard.
+
+Compose files:
+  docker-compose.yml            prod-style topology (source of truth)
+  docker-compose.override.yml   dev overlay (auto-loaded: source mounts + reload
+                                + vite dev server). For prod-style bring-up pass
+                                ONLY the base file: `-f docker-compose.yml`.
+
+-------------------------------------------------------------------------------
+ 0. Topology — which container does what (READ THIS FIRST)
+-------------------------------------------------------------------------------
+
+  Container            Image                        Role
+  -------------------  ---------------------------  -------------------------------
+  strikecore-pg        pgvector/pgvector:pg16       State plane (dossiers, JSONB)
+  strikecore-redis     redis:7-alpine               Job queue (Redis Streams)
+  strikecore-tor       strikecore-tor               SOCKS/Control egress for OSINT
+  strikecore-backend   strikecore-backend:latest    Thin FastAPI (:8765). Serves
+                                                     API/WS + React dist, ENQUEUES
+                                                     jobs. *** NO OSINT TOOLS ***
+  strikecore-toolbox   strikecore-toolbox:latest    Kali + agent runtime + ~157
+                                                     OSINT tools + Redis worker.
+                                                     *** THE TOOL CONTAINER ***
+  strikecore-dashboard strikecore-dashboard:latest  Flask operator UI (:5000)
+
+  CRITICAL RULE
+  -------------
+  The offensive/OSINT binaries (sherlock, maigret, holehe, phoneinfoga, nmap,
+  subfinder, nuclei, ...) live ONLY in strikecore-toolbox. The backend is
+  tool-less BY DESIGN (Dockerfile.backend line 1). Therefore:
+
+    * Run the interactive `strikecore` console in the TOOLBOX, never the backend.
+    * A dossier launched from the backend REPL has zero tools and fires LLM
+      calls from the wrong container -> "Connection error" / empty results.
+
+  Ports are bound to 127.0.0.1 only (localhost). Nothing is exposed to the LAN.
+
+-------------------------------------------------------------------------------
+ 1. First-time bring-up
+-------------------------------------------------------------------------------
+
+  cd ~/strikecore
+
+  1. Build the React UI once (fast, ~1-2 min):
+     docker compose -f docker-compose.yml --profile build run --rm frontend-build
+
+  2. Build all images (toolbox is the slow Kali one — several minutes, one-time):
+     docker compose -f docker-compose.yml build
+
+  3. Bring the whole stack up:
+     docker compose -f docker-compose.yml up -d
+
+  4. Verify everything is healthy:
+     docker compose -f docker-compose.yml ps
+     docker compose -f docker-compose.yml logs --tail=15 toolbox   # "toolbox worker up", NO TimeoutError loop
+     curl -s localhost:8765/api/health ; echo                      # {"status":"ok",...,"postgres":true}
+
+  5. Smoke-test the queue (Python enqueue — no shell-quoting trap):
+     docker compose -f docker-compose.yml exec -T backend python3 -c \
+       "from core import job_queue; r=job_queue.client(); print('enqueued', job_queue.enqueue(r, {'type':'tool','cmd':'id','tool':''}))"
+     sleep 4 && docker compose -f docker-compose.yml logs --tail=10 toolbox   # expect: tool job done rc=0
+
+  6. Migrate existing dossiers into Postgres (one-time, if you have legacy JSON):
+     docker compose -f docker-compose.yml exec -T backend python3 db/backfill_investigations_jsonb.py
+
+-------------------------------------------------------------------------------
+ 2. Using the CLI console on Docker  (the main event)
+-------------------------------------------------------------------------------
+
+  You do NOT have to use the dashboard. A host-side launcher drops you straight
+  into the interactive `strikecore` REPL inside the toolbox (tools included).
+
+  Launcher:  bin/strikecore-console
+  Installed as `strikecore` on your PATH via a symlink in ~/.local/bin.
+
+  USAGE
+    strikecore              # interactive REPL in the toolbox (with all tools)
+    strikecore --check      # one-shot health / tool check, then exit
+    strikecore --setup      # re-run onboarding wizard
+    strikecore -- <args>    # pass anything after -- straight to `strikecore`
+
+  The launcher:
+    - Auto-selects `docker` if you have socket access, else `sudo docker`.
+    - Refuses to run if the toolbox is not up (tells you to `up -d`).
+    - Runs as the toolbox's app user, same identity as the worker, so bind-
+      mounted state stays operator-owned.
+
+  ONE-TIME: drop the sudo prompt for daily CLI use (recommended)
+    sudo usermod -aG docker "$USER"     # then log out and back in
+
+  If you prefer raw docker instead of the launcher:
+    docker exec -it strikecore-toolbox strikecore
+  (Never `docker exec ... strikecore-backend strikecore` — no tools there.)
+
+-------------------------------------------------------------------------------
+ 3. Running a dossier — three equivalent paths
+-------------------------------------------------------------------------------
+
+  a) CLI console (interactive):
+       strikecore
+       [STRIKECORE]> dossier <target> <references...>
+     Tip: paste the target/refs on a SINGLE line. A multi-line paste is split
+     by the REPL into separate inputs and the parse gets mangled.
+
+  b) Dashboard: open http://127.0.0.1:5000 and use the dossier form.
+
+  c) API: POST /api/console/dossier on the backend (:8765) — enqueues a job the
+     toolbox worker consumes.
+
+  All three ultimately run the collection + LLM synthesis where the tools live.
+
+-------------------------------------------------------------------------------
+ 4. AI provider keys (LLM-backed dossiers)
+-------------------------------------------------------------------------------
+
+  Live dossiers need a working provider. Keys resolve from either:
+    - .env         (ANTHROPIC_API_KEY=..., loaded via env_file at container CREATE)
+    - config.toml  (~/.strikecore/config.toml [ai.anthropic].api_key — bind-mounted, live)
+
+  IMPORTANT: .env is read only when a container is CREATED. If you edit .env
+  after the stack is up, recreate the affected containers:
+    docker compose -f docker-compose.yml up -d --force-recreate backend toolbox
+
+  config.toml is bind-mounted, so edits there take effect on the next process
+  start without a recreate.
+
+  The cost-aware router (GR3) picks the model per task_type. `/model` inside the
+  REPL controls the policy. NOTE: `/model <name>` currently pins ANY string
+  (even a typo) as the model with no validation — pin real ids only
+  (e.g. `/model opus`, `/model sonnet5`, `/model auto`).
+
+-------------------------------------------------------------------------------
+ 5. Health check / tool detection
+-------------------------------------------------------------------------------
+
+  strikecore --check           # runs bin/health_check.py inside the toolbox
+
+  The health check is Docker-aware: it probes Tor/Ollama at the hosts the
+  compose env points to (TOR_HOST=tor, TOR_SOCKS_PORT, TOR_CONTROL_PORT,
+  OLLAMA_HOST/OLLAMA_PORT) and falls back to 127.0.0.1 on bare metal. A
+  "Tor SOCKS5 (tor:9050): Running" line means egress is wired correctly.
+
+  If run inside the BACKEND, every OSINT tool shows "missing" — that is
+  expected (backend is tool-less). Always check from the toolbox.
+
+  If tools are genuinely missing IN THE TOOLBOX (install_osint_mega.sh runs with
+  `|| true`, so a partial build failure is swallowed silently):
+    - Live repair (pip/go tools; lost on container recreate):
+        docker exec -it strikecore-toolbox bash -lc 'bash /app/install_osint_mega.sh'
+    - Durable repair (bakes into the image):
+        docker compose -f docker-compose.yml build toolbox
+        docker compose -f docker-compose.yml up -d toolbox
+
+-------------------------------------------------------------------------------
+ 6. Egress / networking notes
+-------------------------------------------------------------------------------
+
+  - LLM calls do NOT route through Tor (the provider router applies no proxy).
+    A raw "Connection error." from a provider means the container could not open
+    a TCP connection to the API host — check container egress/DNS, not the key
+    (a bad key is a 401, not a connection error).
+  - Tor (proxychains) is used only for rate-limited OSINT collection, routed to
+    the tor container (docker/proxychains4.conf).
+  - Active scans (nmap -sS, masscan) must NOT go through Tor. The toolbox has
+    NET_RAW/NET_ADMIN for raw-socket tools.
+  - After a host reboot, if containers lose internet, the bridge NAT rules may
+    need reinstalling: `docker compose -f docker-compose.yml down && up -d`.
+
+-------------------------------------------------------------------------------
+ 7. Everyday commands
+-------------------------------------------------------------------------------
+
+  Status:    docker compose -f docker-compose.yml ps
+  Logs:      docker compose -f docker-compose.yml logs -f toolbox
+  Stop:      docker compose -f docker-compose.yml down
+  Start:     docker compose -f docker-compose.yml up -d
+  Rebuild 1: docker compose -f docker-compose.yml build <service> && up -d <service>
+  Shell:     docker exec -it strikecore-toolbox bash      # raw shell in the toolbox
+
+  State on the host (bind-mounted, operator-owned):
+    ~/.strikecore/            config.toml, audit/, events/, registry/, history
+    ~/strikecore-data/        investigations/, reports/, dossieroutputs/
+
+  Dashboard: http://127.0.0.1:5000     API/docs: http://127.0.0.1:8765/docs
+
+-------------------------------------------------------------------------------
+ 8. Build-performance note (known smell)
+-------------------------------------------------------------------------------
+
+  Dockerfile.toolbox does `COPY . /app` before the heavy install_*.sh, so any
+  code change re-runs the whole OSINT install. If toolbox rebuilds are painfully
+  slow, reorder so dependency/tool layers cache independent of source.
