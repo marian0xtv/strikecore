@@ -48,6 +48,10 @@ fi
 # Strip a leading `--` separator if present, so `-- <args>` reads naturally.
 if [ "${1:-}" = "--" ]; then shift; fi
 
-# -it for a real TTY REPL; run as the toolbox's app user (default), same
-# identity as the worker so bind-mounted state stays operator-owned.
-exec "${DOCKER[@]}" exec -it "$CONTAINER" strikecore "$@"
+# Always keep stdin open (-i); only allocate a TTY (-t) when attached to one,
+# so the interactive REPL gets a terminal but `strikecore --check` still works
+# in a pipe/script (docker refuses -t without a real TTY). Run as the toolbox's
+# app user (default), same identity as the worker so state stays operator-owned.
+TTY_FLAGS=(-i)
+[ -t 0 ] && [ -t 1 ] && TTY_FLAGS+=(-t)
+exec "${DOCKER[@]}" exec "${TTY_FLAGS[@]}" "$CONTAINER" strikecore "$@"

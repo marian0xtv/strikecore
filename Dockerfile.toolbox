@@ -35,8 +35,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # OSINT metapackage — large; its own layer so it caches independently of code.
 RUN apt-get update && apt-get install -y ${TOOLSET} && rm -rf /var/lib/apt/lists/*
 
-# proxychains routes through the tor *container* (decision I7).
+# proxychains routes through the tor *container* (decision I7). World-writable so
+# the non-root app user can rewrite the ProxyList IP at start (toolbox-entrypoint.sh).
 COPY docker/proxychains4.conf /etc/proxychains4.conf
+RUN chmod 0666 /etc/proxychains4.conf
 
 COPY . /app
 
@@ -64,5 +66,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends spiderfoot subl
     rm -rf /var/lib/apt/lists/*; \
     command -v sublist3r >/dev/null 2>&1 || pip3 install --break-system-packages sublist3r || true
 
+# mosint is a Go tool, but install_osint_mega.sh tries it via pip (no such
+# working package) so it silently never installs. Install the real binary into
+# /data/go/bin (already on PATH). Needs external DNS at build time.
+RUN GOBIN=/data/go/bin GOFLAGS=-mod=mod \
+    go install github.com/alpkeskin/mosint/v3/cmd/mosint@latest \
+    && /data/go/bin/mosint --help >/dev/null 2>&1 || true
+RUN chown -R ${APP_UID}:${APP_GID} /data/go 2>/dev/null || true
+
+# Resolve the tor container's runtime IP into /etc/proxychains4.conf on start
+# (proxychains-ng needs a numeric IP for the first proxy).
+COPY docker/toolbox-entrypoint.sh /usr/local/bin/toolbox-entrypoint.sh
+RUN chmod +x /usr/local/bin/toolbox-entrypoint.sh
+
 USER ${APP_UID}:${APP_GID}
+ENTRYPOINT ["/usr/local/bin/toolbox-entrypoint.sh"]
 CMD ["python3", "toolbox/worker.py"]

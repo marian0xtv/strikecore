@@ -27,7 +27,11 @@ dry_run = false
 
 [ai.anthropic]
 api_key = ""
-model = "claude-sonnet-4-20250514"
+# Default/non-routed model (health check, banner, calls without a task_type).
+# Must be a currently-available id — claude-sonnet-4-20250514 was retired and
+# 404s, which surfaced only once container DNS was fixed. Cost-aware routing
+# still picks per-task tiers (haiku/opus/fable) via governance/model_router.py.
+model = "claude-sonnet-4-6"
 max_tokens = 8192
 
 [ai.openrouter]

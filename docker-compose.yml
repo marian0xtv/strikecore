@@ -23,6 +23,16 @@ x-app-env: &app-env
   TOR_SOCKS_PORT: "9050"
   TOR_CONTROL_PORT: "9051"
 
+# Explicit resolvers for the app containers. Docker's embedded DNS (127.0.0.11)
+# only forwards external lookups if the daemon captured upstream nameservers at
+# container-create time; on this host it captured NONE ("no external nameservers
+# defined"), so hostnames like api.anthropic.com failed to resolve inside the
+# containers -> LLM calls died with a bare "Connection error." Public egress on
+# :53 is open, so pinning 1.1.1.1/8.8.8.8 fixes resolution deterministically.
+x-app-dns: &app-dns
+  - "1.1.1.1"
+  - "8.8.8.8"
+
 services:
 
   postgres:
@@ -100,6 +110,7 @@ services:
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     env_file: [.env]
     environment: *app-env
+    dns: *app-dns
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -124,6 +135,7 @@ services:
     user: "${APP_UID:-1000}:${APP_GID:-1000}"
     env_file: [.env]
     environment: *app-env
+    dns: *app-dns
     # Raw-socket tools (nmap -sS, masscan). The capability audit (T10,
     # docs/CAPABILITY_AUDIT.md) decides whether any subset additionally needs
     # network_mode: host like the voip service.
@@ -150,6 +162,7 @@ services:
     environment:
       <<: *app-env
       FLASK_PORT: "5000"
+    dns: *app-dns
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
