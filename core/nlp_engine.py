@@ -855,6 +855,18 @@ class NaturalLanguageEngine:
             if platform:
                 self._store.add_profile(platform.group(1).title(), url, "PROBABLE", f"Found by {tool}")
         
+        # Extract locations — ONLY from tools that emit structured location lines
+        # (deep_lookup / contact_finder / photo mapper), so the dashboard GeoMap
+        # gets populated without geocoding false positives from generic chatter.
+        location_tools = {"deep_lookup", "contact_finder", "ig-photo-mapper", "ig-social-circle"}
+        if tool_base in location_tools:
+            # deep_lookup one-liner: "    Locations: Velletri, Pisa" (or "N/A").
+            for m in _re.finditer(r'^\s*Locations?:\s*(.+)$', output, _re.MULTILINE):
+                for loc in m.group(1).split(","):
+                    loc = loc.strip()
+                    if loc and loc.upper() != "N/A" and 1 < len(loc) <= 60:
+                        self._store.add_location(loc, source=tool_base, confidence="PROBABLE")
+
         # Save raw evidence
         self._store.add_evidence(tool, output[:2000])
         

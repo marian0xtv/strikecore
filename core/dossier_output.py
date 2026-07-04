@@ -81,6 +81,114 @@ def write_run(
     return written
 
 
+def finalize_dashboard_artifacts(
+    store: Any,
+    *,
+    dossier_json: dict[str, Any] | None = None,
+) -> dict[str, str]:
+    """Produce the dashboard-facing artifacts EVERY dossier must have.
+
+    This is the single, path-agnostic enforcer of the "finished dossier" standard
+    so it holds categorically across all three dossier paths (console ``dossier``,
+    ``bin/intel-team.py``, ``bin/agent-dossier.py``):
+
+        * ``~/strikecore-data/reports/<tid>_report.{md,html}``  -> Report tab
+        * ``~/strikecore-data/reports/graphs/<tid>_graph.html`` -> Graph tab
+        * populated ``store.locations``                         -> GeoMap
+
+    Driven by the live ``InvestigationStore`` (``store``) because the dashboard
+    target view is keyed on ``store.target_id``. When ``dossier_json`` carries a
+    structured ``locations`` list (top-level or under ``investigation_store``),
+    those are harvested into the store first so the GeoMap populates regardless
+    of the collection path.
+
+    Idempotent and fully failure-isolated: a failure here must never break a
+    dossier run. Returns the paths written (and any per-step error strings).
+    Heavy deps (``report_builder``/``graph_engine`` pull in networkx/pyvis) are
+    imported lazily so this module stays cheap and dependency-free to import.
+    """
+    result: dict[str, str] = {}
+    if store is None:
+        return result
+
+    # 1) Harvest structured locations from the dossier payload into the store,
+    #    so paths that carry locations in their dict (but not yet in the store)
+    #    still get a populated GeoMap. Purely structured — never free-text.
+    try:
+        _harvest_locations(store, dossier_json)
+    except Exception:  # noqa: BLE001
+        pass
+
+    # 2) Snapshot the store and render the operator-facing report + graph.
+    try:
+        data = store.data
+        tid = data.get("target_id")
+    except Exception:  # noqa: BLE001
+        return result
+    if not tid:
+        return result
+
+    # Gap-filling, NOT overwriting: the console dossier agent often writes a
+    # richer <tid>_dossier.md and <tid>_graph.html (with connections/orgs the
+    # store does not capture). We only synthesize the store-derived artifact
+    # when the agent's is absent, so the standard is guaranteed present without
+    # ever downgrading the agent's output.
+    try:
+        from core.report_builder import save_report, REPORTS_DIR as _RD
+        if (_RD / f"{tid}_dossier.md").exists():
+            result["report_skipped"] = "agent dossier.md present"
+        else:
+            md_path, html_path = save_report(data, tid)
+            result["report_md"] = str(md_path)
+            result["report_html"] = str(html_path)
+    except Exception as exc:  # noqa: BLE001
+        result["report_error"] = str(exc)
+
+    try:
+        from core.graph_engine import build_graph, GRAPHS_DIR as _GD
+        if (_GD / f"{tid}_graph.html").exists():
+            result["graph_skipped"] = "agent graph present"
+        else:
+            _graph, graph_path = build_graph(data)
+            result["graph_html"] = str(graph_path)
+    except Exception as exc:  # noqa: BLE001
+        result["graph_error"] = str(exc)
+
+    return result
+
+
+def _harvest_locations(store: Any, dossier_json: dict[str, Any] | None) -> None:
+    """Copy any STRUCTURED locations from ``dossier_json`` into ``store``.
+
+    Reads only explicit ``locations`` lists (top-level and under an embedded
+    ``investigation_store`` snapshot) — dict entries ``{name, source, confidence}``
+    or bare strings. Never parses free text (no geocoding false positives).
+    ``store.add_location`` de-duplicates and auto-persists.
+    """
+    if not isinstance(dossier_json, dict):
+        return
+    buckets = [dossier_json.get("locations")]
+    inv = dossier_json.get("investigation_store")
+    if isinstance(inv, dict):
+        buckets.append(inv.get("locations"))
+    for locs in buckets:
+        if not isinstance(locs, list):
+            continue
+        for entry in locs:
+            if isinstance(entry, dict):
+                name = entry.get("name")
+                source = entry.get("source", "") or "dossier"
+                confidence = entry.get("confidence", "PROBABLE") or "PROBABLE"
+            elif isinstance(entry, str):
+                name, source, confidence = entry, "dossier", "PROBABLE"
+            else:
+                continue
+            if isinstance(name, str):
+                name = name.strip()
+                if 1 < len(name) <= 60:
+                    store.add_location(name, source=source, confidence=confidence)
+
+
 def iter_runs(limit: int | None = None) -> list[dict[str, Any]]:
     """Newest-first captured runs. Each entry: {dir, meta, dossier, log_path}.
 

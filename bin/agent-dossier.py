@@ -163,6 +163,22 @@ async def _amain(args: argparse.Namespace) -> int:
             print(f"[agent-dossier] dossier_output={run_dir}")
         except Exception as exc:  # noqa: BLE001
             print(f"[agent-dossier] dossier-output capture skipped: {exc}", file=sys.stderr)
+
+    # CATEGORICAL STANDARD: leave the dashboard artifacts behind (Report/Graph
+    # tabs + GeoMap) for this target, exactly like the console and intel-team
+    # paths. Enforced centrally; never breaks the run.
+    if dossier_output is not None and store is not None:
+        try:
+            arts = dossier_output.finalize_dashboard_artifacts(store, dossier_json=result)
+            if arts.get("report_html"):
+                print(f"[agent-dossier] report-tab={arts['report_html']}")
+            if arts.get("graph_html"):
+                print(f"[agent-dossier] graph-tab={arts['graph_html']}")
+            for _k in ("report_error", "graph_error"):
+                if arts.get(_k):
+                    print(f"[agent-dossier] {_k}={arts[_k]}", file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001
+            print(f"[agent-dossier] dashboard artifacts skipped: {exc}", file=sys.stderr)
     return 0
 
 

@@ -1288,22 +1288,45 @@ class StrikeCoreShell:
         
         console.print("[bright_cyan]Avvio investigazione...[/bright_cyan]")
 
-        # Capture the ENTIRE run transcript + a structured JSON snapshot into the
-        # unified dossieroutputs/ mirror (best-effort; never breaks the run).
+        # Capture the ENTIRE run transcript for the unified dossieroutputs/ mirror
+        # (best-effort). dossier_output is stdlib-only, so this import never fails
+        # in practice; the fallback keeps the run alive if it somehow does.
         try:
             from core import dossier_output
         except Exception:  # noqa: BLE001
             dossier_output = None  # type: ignore[assignment]
 
-        if dossier_output is None:
-            self._nlp.process(prompt)
-            return
-
         from datetime import datetime, timezone
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
-        with dossier_output.record_console(console) as cap:
+        transcript = ""
+        if dossier_output is not None:
+            with dossier_output.record_console(console) as cap:
+                self._nlp.process(prompt)
+            transcript = cap.get("text", "")
+        else:
             self._nlp.process(prompt)
         finished = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+        # CATEGORICAL STANDARD (shared by all three dossier paths): every finished
+        # dossier must leave the dashboard artifacts behind — {tid}_report.{md,html}
+        # (Report tab), {tid}_graph.html (Graph tab), and a populated GeoMap.
+        # Enforced centrally by dossier_output.finalize_dashboard_artifacts so the
+        # rule holds identically everywhere. Never breaks the run.
+        if dossier_output is not None and self._nlp._store is not None:
+            try:
+                arts = dossier_output.finalize_dashboard_artifacts(self._nlp._store)
+                if arts.get("report_html"):
+                    console.print(f"[green]Report saved:[/green] {arts['report_html']}")
+                if arts.get("graph_html"):
+                    console.print(f"[green]Graph saved:[/green] {arts['graph_html']}")
+                for _k in ("report_error", "graph_error"):
+                    if arts.get(_k):
+                        console.print(f"[dim]{_k}: {arts[_k]}[/dim]")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"[dim]dashboard artifacts skipped: {exc}[/dim]")
+
+        if dossier_output is None:
+            return
 
         try:
             store_data = dict(self._nlp._store.data) if self._nlp._store else {}
@@ -1332,7 +1355,7 @@ class StrikeCoreShell:
                     "references": references,
                 },
                 dossier_json=dossier_json,
-                transcript=cap.get("text", ""),
+                transcript=transcript,
             )
             console.print(f"[dim]dossier output saved: {run_dir}[/dim]")
         except Exception as exc:  # noqa: BLE001

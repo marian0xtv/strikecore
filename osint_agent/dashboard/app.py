@@ -53,6 +53,51 @@ PERF_FILE = Path.home() / ".strikecore" / "tool_performance.json"
 AUDIT_DIR = Path.home() / ".strikecore" / "audit"
 _HEPH_RUNS_DIR = Path.home() / ".strikecore" / "hephaestus" / "runs"
 
+
+def _md_to_html(md: str) -> str:
+    """Minimal, dependency-free Markdown -> HTML for rendering dossier files.
+
+    Handles #/##/### headers, **bold**, `code`, [text](url) links, GitHub-style
+    tables, -/*/+ lists, --- rules and paragraphs. Everything is HTML-escaped
+    first, so agent-authored dossier content cannot inject markup/scripts.
+    """
+    import html as _html
+    lines = md.replace("\r\n", "\n").split("\n")
+    out, i, n = [], 0, len(lines)
+
+    def inline(t: str) -> str:
+        t = _html.escape(t)
+        t = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", t)
+        t = re.sub(r"`(.+?)`", r"<code>\1</code>", t)
+        t = re.sub(r"\[(.+?)\]\((https?://[^\s)]+)\)", r'<a href="\2" target="_blank">\1</a>', t)
+        return t
+
+    while i < n:
+        s = lines[i].strip()
+        if not s:
+            i += 1; continue
+        if re.fullmatch(r"-{3,}|\*{3,}|_{3,}", s):
+            out.append("<hr>"); i += 1; continue
+        m = re.match(r"(#{1,6})\s+(.*)", s)
+        if m:
+            lvl = len(m.group(1)); out.append(f"<h{lvl}>{inline(m.group(2))}</h{lvl}>"); i += 1; continue
+        if s.startswith("|") and i + 1 < n and re.match(r"^\s*\|?[\s:|-]+\|?\s*$", lines[i+1]) and "-" in lines[i+1]:
+            def cells(row): return [c.strip() for c in row.strip().strip("|").split("|")]
+            head = cells(s); i += 2
+            rows = []
+            while i < n and lines[i].strip().startswith("|"):
+                rows.append(cells(lines[i])); i += 1
+            th = "".join(f"<th>{inline(c)}</th>" for c in head)
+            trs = "".join("<tr>" + "".join(f"<td>{inline(c)}</td>" for c in r) + "</tr>" for r in rows)
+            out.append(f"<table><thead><tr>{th}</tr></thead><tbody>{trs}</tbody></table>"); continue
+        if re.match(r"[-*+]\s+", s):
+            items = []
+            while i < n and re.match(r"\s*[-*+]\s+", lines[i]):
+                items.append(f"<li>{inline(re.sub(r'^\s*[-*+]\s+', '', lines[i]))}</li>"); i += 1
+            out.append("<ul>" + "".join(items) + "</ul>"); continue
+        out.append(f"<p>{inline(s)}</p>"); i += 1
+    return "\n".join(out)
+
 # Fix PATH for tool detection
 _extra = [str(Path.home() / ".local" / "bin"), str(Path.home() / "go" / "bin"), "/usr/local/go/bin"]
 _path = os.environ.get("PATH", "")
@@ -502,6 +547,11 @@ def target_view(tid):
 
     has_graph = (GRAPHS_DIR / f"{tid}_graph.html").exists()
     has_report = (REPORTS_DIR / f"{tid}_report.html").exists()
+    # The dossier narrative the agent writes lands as {tid}_dossier.md; the
+    # store-derived report_builder output lands as {tid}_report.md. Surface
+    # whichever exists so a finished dossier always has a visible tab.
+    has_dossier = ((REPORTS_DIR / f"{tid}_dossier.md").exists()
+                   or (REPORTS_DIR / f"{tid}_report.md").exists())
 
     # Email cards
     email_rows = ""
@@ -550,6 +600,7 @@ def target_view(tid):
       <a href="/target/{tid}/photomap" class="px-3 py-1.5 glass text-pink-400 text-xs hover:bg-white/5 border-pink-500/20">Photo Map</a>
       <a href="/target/{tid}/map" class="px-3 py-1.5 glass text-cyan-400 text-xs hover:bg-white/5 border-cyan-500/20">GeoMap</a>
       <a href="/target/{tid}/timeline" class="px-3 py-1.5 glass text-yellow-300 text-xs hover:bg-white/5 border-yellow-300/20">Timeline</a>
+      {"<a href='/target/"+tid+"/dossier' class='px-3 py-1.5 glass text-red-300 text-xs hover:bg-white/5 border-red-500/30 font-semibold' target='_blank'>Dossier</a>" if has_dossier else ""}
       {"<a href='/target/"+tid+"/graph' class='px-3 py-1.5 glass text-green-400 text-xs hover:bg-white/5 border-green-500/20'>Graph</a>" if has_graph else ""}
       {"<a href='/target/"+tid+"/report' class='px-3 py-1.5 glass text-white text-xs hover:bg-white/5' target='_blank'>Report</a>" if has_report else ""}
     </div>'''
@@ -992,6 +1043,40 @@ def target_report(tid):
     p = REPORTS_DIR / f"{tid}_report.html"
     return send_file(str(p)) if p.exists() else abort(404)
 
+@app.route('/target/<tid>/dossier')
+def target_dossier(tid):
+    """Render the finished dossier markdown ({tid}_dossier.md, else the
+    store-derived {tid}_report.md) as a styled, self-contained HTML page."""
+    md_file = REPORTS_DIR / f"{tid}_dossier.md"
+    if not md_file.exists():
+        md_file = REPORTS_DIR / f"{tid}_report.md"
+    if not md_file.exists():
+        abort(404)
+    body = _md_to_html(md_file.read_text(encoding="utf-8", errors="replace"))
+    page = '''<!DOCTYPE html><html><head><meta charset="utf-8">
+<title>Dossier: ''' + tid + '''</title>
+<style>
+body{background:#0a0a1a;color:#d8d8e0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  max-width:900px;margin:0 auto;padding:40px 28px;line-height:1.6}
+a.back{color:#888;font-size:12px;text-decoration:none}
+h1{color:#ff3333;border-bottom:2px solid #ff3333;padding-bottom:10px;font-size:24px}
+h2{color:#00cccc;margin-top:28px;font-size:18px;border-bottom:1px solid rgba(0,204,204,0.2);padding-bottom:6px}
+h3{color:#ffcc00;font-size:15px;margin-top:20px}
+table{border-collapse:collapse;width:100%;margin:14px 0;font-size:13px;overflow-x:auto;display:block}
+th,td{border:1px solid rgba(255,255,255,0.12);padding:7px 10px;text-align:left}
+th{background:rgba(255,50,50,0.12);color:#fff}
+tr:nth-child(even) td{background:rgba(255,255,255,0.02)}
+code{background:rgba(255,255,255,0.08);padding:1px 5px;border-radius:4px;font-size:12px;color:#8fd6ff}
+ul{padding-left:22px}li{margin:3px 0}
+hr{border:none;border-top:1px solid rgba(255,255,255,0.1);margin:24px 0}
+strong{color:#fff}
+a{color:#4db8ff}
+</style></head><body>
+<a class="back" href="/target/''' + tid + '''">&#8592; back to target</a>
+''' + body + '''
+</body></html>'''
+    return Response(page, mimetype='text/html')
+
 @app.route('/target/<tid>/manage')
 def manage_target(tid):
     import sqlite3
@@ -1097,10 +1182,32 @@ def target_map(tid):
         except:
             pass
 
+    # Dossier geo markers written by the agent dossier flow ({tid}_map_markers.json,
+    # ready coords {name, lat, lng|lon, note}). The GeoMap otherwise never reads
+    # them, leaving the map empty after a finished dossier.
+    dossier_markers = []
+    dm_file = GRAPHS_DIR / f"{tid}_map_markers.json"
+    if dm_file.exists():
+        try:
+            for m in json.loads(dm_file.read_text()):
+                lat = m.get("lat")
+                lon = m.get("lon", m.get("lng"))
+                if lat is None or lon is None:
+                    continue
+                dossier_markers.append({
+                    "name": m.get("name", ""),
+                    "note": m.get("note", "") or m.get("source", ""),
+                    "lat": lat, "lon": lon,
+                })
+        except Exception:
+            pass
+
     loc_json = json.dumps(loc_markers)
     photo_json = json.dumps(photo_markers)
+    dossier_json_markers = json.dumps(dossier_markers)
     total_photos = len(photo_markers)
     total_locs = len(loc_markers)
+    total_dossier = len(dossier_markers)
 
     return Response('''<!DOCTYPE html><html><head><meta charset="utf-8">
 <title>GeoMap: ''' + name + '''</title>
@@ -1138,6 +1245,7 @@ body{margin:0;background:#050510;font-family:"JetBrains Mono",monospace;color:#c
   <a href="/target/''' + tid + '''">&#8592;</a>
   <h1>&#127758; GeoMap</h1>
   <span class="st">''' + name + '''</span>
+  <span class="badge" style="background:rgba(255,102,0,0.2);color:#ff8833">''' + str(total_dossier) + ''' dossier</span>
   <span class="badge" style="background:rgba(0,204,102,0.2);color:#00cc66">''' + str(total_photos) + ''' photos</span>
   <span class="badge" style="background:rgba(255,204,0,0.2);color:#ffcc00">''' + str(total_locs) + ''' locations</span>
 </div>
@@ -1147,6 +1255,20 @@ var map = L.map('map').setView([41.9, 12.5], 5);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom:19}).addTo(map);
 
 var bounds = [];
+
+// ── Dossier markers (agent-written, coords ready) ──
+var dossierPts = ''' + dossier_json_markers + ''';
+dossierPts.forEach(function(m) {
+  var icon = L.divIcon({
+    html: '<div style="background:#ff8833;width:15px;height:15px;border-radius:50%;border:2px solid #fff;box-shadow:0 0 10px #ff883360"></div>',
+    className: '', iconSize: [15, 15], iconAnchor: [7, 7]
+  });
+  var popup = '<div class="loc-popup"><div class="name">&#128205; ' + (m.name || 'Location') + '</div>'
+    + (m.note ? '<div class="src">' + m.note + '</div>' : '')
+    + '<div class="src">' + parseFloat(m.lat).toFixed(4) + ', ' + parseFloat(m.lon).toFixed(4) + '</div></div>';
+  L.marker([m.lat, m.lon], {icon: icon}).addTo(map).bindPopup(popup);
+  bounds.push([m.lat, m.lon]);
+});
 
 // ── Photo markers (have GPS already) ──
 var photos = ''' + photo_json + ''';
@@ -1209,6 +1331,7 @@ legend.onAdd = function() {
   div.innerHTML = '<b>Map Legend</b>'
     + '<div><span style="background:#3399ff"></span> Photo (EXIF GPS)</div>'
     + '<div><span style="background:#00cc66"></span> Photo (Geotag)</div>'
+    + '<div><span style="background:#ff8833"></span> Dossier Location</div>'
     + '<div><span style="background:#ffcc00;border-radius:3px;transform:rotate(45deg)"></span> Investigation Location</div>';
   return div;
 };
