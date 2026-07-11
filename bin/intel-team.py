@@ -154,9 +154,9 @@ async def _amain(args: argparse.Namespace) -> int:
     print(f"[intel-team] PIR={pir.id} target={pir.target!r}", file=sys.stderr)
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     if dossier_output is not None:
-        with dossier_output.tee_stdout() as _buf:
+        with dossier_output.tee_streams() as _cap:
             dossier = await team.investigate(pir, operator_notes=args.operator_notes)
-            transcript = _buf.getvalue()
+        transcript = _cap.get("text", "")
     else:
         dossier = await team.investigate(pir, operator_notes=args.operator_notes)
         transcript = ""

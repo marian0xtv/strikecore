@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -266,6 +267,52 @@ def tee_stdout() -> Iterator[io.StringIO]:
         yield buf
     finally:
         sys.stdout = real
+
+
+# ANSI escape sequences (Rich emits these when the real stream is a TTY); we
+# strip them so output.log is clean plaintext for Hephaestus ingestion.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text or "")
+
+
+@contextmanager
+def tee_streams() -> Iterator[dict[str, str]]:
+    """Tee BOTH ``sys.stdout`` and ``sys.stderr`` into one buffer for the run.
+
+    This is the robust, console-instance-agnostic capture: every default Rich
+    ``Console()`` (there are several — ``cli/shell.py`` and ``core/nlp_engine.py``
+    each hold their own) resolves ``sys.stdout`` at write time, so replacing the
+    streams captures ALL of them plus raw ``print`` in one chronological
+    transcript. Yields a holder dict whose ``text`` key is filled with the
+    ANSI-stripped transcript on exit. Failure-isolated: any error restores the
+    real streams and leaves whatever was captured.
+
+    Caveat: a ``logging.StreamHandler`` that bound ``sys.stderr`` at import time
+    holds a direct reference and bypasses this tee; only writes that resolve the
+    current ``sys.stdout``/``sys.stderr`` at emit time are captured. Dossier
+    output is Rich/``print``, so this is not a gap in practice.
+
+    Use this (not ``record_console``) for dossier capture — ``record_console``
+    only sees the single console instance it is handed, which is why the console
+    ``dossier`` path was writing empty logs.
+    """
+    holder = {"text": ""}
+    buf = io.StringIO()
+    real_out, real_err = sys.stdout, sys.stderr
+    sys.stdout = _Tee(real_out, buf)  # type: ignore[assignment]
+    sys.stderr = _Tee(real_err, buf)  # type: ignore[assignment]
+    try:
+        yield holder
+    finally:
+        sys.stdout = real_out
+        sys.stderr = real_err
+        try:
+            holder["text"] = _strip_ansi(buf.getvalue())
+        except Exception:
+            holder["text"] = ""
 
 
 @contextmanager

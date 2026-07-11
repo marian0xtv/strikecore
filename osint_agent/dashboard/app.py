@@ -698,18 +698,48 @@ def hephaestus_view():
 
     pending = [(r["run_id"], p) for r in runs for p in r.get("pending_approvals", [])]
 
+    # --- Pending gates: now APPROVE / REJECT directly from the dashboard -----
     pending_html = ""
     if pending:
         rows = ""
         for rid, p in pending:
             gate, rid_e = _e(p["gate"]), _e(rid)
-            rows += (f'<div class="glass-bright p-3 mb-2 border border-yellow-500/30">'
-                     f'<span class="text-yellow-400 font-mono text-xs">{gate}</span> '
-                     f'<span class="text-gray-300 text-xs">on {rid_e} — {_e(p.get("reason",""))}</span>'
-                     f'<div class="text-[10px] text-gray-500 mt-1">clear with: '
-                     f'<span class="text-cyan-400">hephaestus approve {rid_e} {gate}</span></div></div>')
+            rows += (
+                f'<div class="glass-bright p-3 mb-2 border border-yellow-500/30">'
+                f'<span class="text-yellow-400 font-mono text-xs">{gate}</span> '
+                f'<span class="text-gray-300 text-xs">on {rid_e} — {_e(p.get("reason",""))}</span>'
+                f'<div class="mt-2 flex gap-2">'
+                f'<button onclick="hephGate(\'approve\',\'{rid_e}\',\'{gate}\')" '
+                f'class="px-3 py-1 bg-green-500/20 border border-green-500/30 rounded text-green-400 text-[11px]">Approve</button>'
+                f'<button onclick="hephGate(\'reject\',\'{rid_e}\',\'{gate}\')" '
+                f'class="px-3 py-1 bg-red-500/20 border border-red-500/30 rounded text-red-400 text-[11px]">Reject</button>'
+                f'</div></div>')
         pending_html = (f'<h2 class="text-sm font-semibold text-yellow-400 mb-2">'
                         f'Pending sandbox gates ({len(pending)})</h2>{rows}')
+    else:
+        pending_html = ('<h2 class="text-sm font-semibold text-gray-400 mb-2">'
+                        'Pending sandbox gates (0)</h2>'
+                        '<div class="text-[11px] text-gray-500">No gates awaiting a decision.</div>')
+
+    # --- Audit / registry mutation trail: what actually changed -------------
+    trail = _heph_audit_trail(30)
+    trail_html = ('<h2 class="text-sm font-semibold text-cyan-400 mt-6 mb-2">'
+                  'Mutation trail (audit chain)</h2>')
+    if trail:
+        rows = ""
+        for e in trail:
+            ev = _e(e.get("event", ""))
+            extra = e.get("gate") or e.get("status") or e.get("name") or ""
+            rid = _e(e.get("run_id", ""))
+            rows += (f'<div class="text-[10px] text-gray-400 font-mono border-b border-white/5 py-1">'
+                     f'<span class="text-gray-500">{_e(e.get("ts",""))}</span> '
+                     f'<span class="text-cyan-300">{ev}</span> '
+                     f'<span class="text-gray-300">{_e(extra)}</span> '
+                     f'{("· " + rid) if rid else ""}</div>')
+        trail_html += f'<div class="glass-bright p-3">{rows}</div>'
+    else:
+        trail_html += ('<div class="text-[11px] text-gray-500">No Hephaestus/registry '
+                       'mutations recorded yet.</div>')
 
     if not runs:
         body = ('<div class="glass-bright p-6 text-gray-400 text-sm">'
@@ -718,29 +748,182 @@ def hephaestus_view():
     else:
         cards = ""
         for r in runs:
+            rid_e = _e(r["run_id"])
             t = r.get("totals", {})
             usd = f"${t.get('cost_usd_micros', 0) / 1_000_000:.4f}"
             decs = "".join(
                 f'<div class="text-[10px] text-gray-400">{_e(d.get("action",""))} '
                 f'<span class="text-gray-300">{_e(d.get("candidate",""))}</span> — {_e(d.get("rationale",""))}</div>'
                 for d in r.get("decisions", []))
+
+            # git_actions ledger — the closest "what this run changed" record.
+            ga = r.get("git_actions", [])
+            ga_html = ""
+            if ga:
+                ga_rows = "".join(
+                    f'<div class="text-[10px] text-gray-400"><span class="text-amber-300 font-mono">'
+                    f'{_e(a.get("action",""))}</span> {_e(a.get("detail",""))}</div>'
+                    for a in ga)
+                ga_html = ('<div class="mt-2"><div class="text-[10px] text-gray-500 uppercase '
+                           'tracking-wide mb-1">changes / gate decisions</div>' + ga_rows + '</div>')
+
+            # rejected gates on this run.
+            rej = r.get("rejected_approvals", [])
+            rej_html = ""
+            if rej:
+                rej_rows = "".join(
+                    f'<div class="text-[10px] text-red-300">REJECTED {_e(p.get("gate",""))} '
+                    f'{_e(p.get("candidate",""))}'
+                    + (f' — {_e(p.get("note",""))}' if p.get("note") else "") + '</div>'
+                    for p in rej)
+                rej_html = ('<div class="mt-2"><div class="text-[10px] text-gray-500 uppercase '
+                            'tracking-wide mb-1">rejected gates</div>' + rej_rows + '</div>')
+
+            # dossier gap analysis: gaps + proof the FULL logs were ingested.
+            dga = r.get("dossier_gap_analysis")
+            dga_html = ""
+            if dga:
+                gaps = dga.get("gaps", [])
+                gap_rows = "".join(
+                    f'<div class="text-[10px] text-gray-400">[{_e(g.get("severity",""))}] '
+                    f'<span class="text-gray-200">{_e(g.get("category",""))}</span> '
+                    f'({_e(g.get("proposed_fix_kind",""))})'
+                    + (f' — {_e(g.get("evidence",""))}' if g.get("evidence") else "") + '</div>'
+                    for g in gaps)
+                li = dga.get("log_ingestion", []) or []
+                read = sum(1 for s in li if s.get("log_chars"))
+                chars = sum(s.get("log_chars", 0) for s in li)
+                li_line = (f'<div class="text-[10px] text-emerald-400 mb-1">read '
+                           f'{read}/{len(li)} full transcript(s), {chars} chars ingested</div>'
+                           if li else
+                           '<div class="text-[10px] text-yellow-500 mb-1">no transcript evidence '
+                           'ingested (empty output.log)</div>')
+                dga_html = (
+                    '<div class="mt-2"><div class="text-[10px] text-gray-500 uppercase '
+                    f'tracking-wide mb-1">dossier gap analysis ({len(gaps)} gaps)</div>'
+                    + li_line + gap_rows
+                    + f'<button onclick="hephPlan(\'{rid_e}\')" class="mt-2 px-3 py-1 '
+                    'bg-purple-500/20 border border-purple-500/30 rounded text-purple-300 '
+                    'text-[11px]">View proposals (plan)</button>'
+                    f'<pre id="plan-{rid_e}" class="hidden mt-2 p-2 bg-black/40 rounded '
+                    'text-[10px] text-gray-300 whitespace-pre-wrap overflow-x-auto"></pre></div>')
+
             cards += (
                 f'<div class="glass-bright p-4 mb-3">'
                 f'<div class="flex items-center justify-between mb-1">'
-                f'<span class="text-white font-semibold text-sm">{_e(r["run_id"])}</span>'
+                f'<span class="text-white font-semibold text-sm">{rid_e}</span>'
                 f'<span class="text-[10px] text-gray-500">{_e(r.get("started_at",""))}</span></div>'
                 f'<div class="text-[10px] text-gray-400 mb-2">'
                 f'status <span class="text-gray-200">{_e(r.get("status",""))}</span> · '
                 f'focus <span class="text-gray-200">{_e(r.get("params",{}).get("focus_category",""))}</span> · '
-                f'candidates {len(r.get("candidates",[]))} · cost {usd}</div>{decs}</div>')
-        body = f'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4"><div>{pending_html}</div><div>{cards}</div></div>'
+                f'candidates {len(r.get("candidates",[]))} · cost {usd}</div>'
+                f'{decs}{dga_html}{ga_html}{rej_html}</div>')
+        body = (f'<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">'
+                f'<div>{pending_html}{trail_html}</div><div>{cards}</div></div>')
 
     content = f'''
     <h1 class="text-xl font-bold text-white mb-1">Hephaestus — Toolsmith</h1>
-    <p class="text-xs text-gray-500 mb-6">Native R&amp;D agent · run records read-only · approvals via console/CLI</p>
+    <p class="text-xs text-gray-500 mb-6">Native R&amp;D agent · approve / reject gates here · full-transcript ingestion + change visibility</p>
     {body}
+    <script>
+    function hephGate(action, runId, gate) {{
+      var reason = "";
+      if (action === "reject") {{
+        reason = window.prompt("Reason for rejecting " + gate + " on " + runId + " (audited):", "");
+        if (reason === null) return;
+      }}
+      fetch('/api/hephaestus/' + action, {{
+        method: 'POST', headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{run_id: runId, gate: gate, reason: reason}})
+      }}).then(function(r){{ return r.json(); }}).then(function(d){{
+        if (!d.ok) {{ alert(d.error || 'failed'); return; }}
+        location.reload();
+      }}).catch(function(e){{ alert('error: ' + e); }});
+    }}
+    function hephPlan(runId) {{
+      var el = document.getElementById('plan-' + runId);
+      if (!el) return;
+      if (!el.classList.contains('hidden')) {{ el.classList.add('hidden'); return; }}
+      fetch('/api/hephaestus/improvement/' + runId).then(function(r){{ return r.json(); }})
+        .then(function(d){{
+          el.textContent = d.ok ? d.markdown : (d.error || 'no plan');
+          el.classList.remove('hidden');
+        }}).catch(function(e){{ el.textContent = 'error: ' + e; el.classList.remove('hidden'); }});
+    }}
+    </script>
     '''
     return _render("Hephaestus", content, "hephaestus")
+
+
+def _valid_run_id(run_id) -> bool:
+    """Run ids are uuid4 hex slices — hex only, bounded length. Rejecting
+    anything else keeps attacker-controlled input out of the RUNS_DIR path
+    (no traversal / arbitrary-file probing via approve/reject)."""
+    return bool(isinstance(run_id, str) and re.fullmatch(r"[a-f0-9]{1,64}", run_id))
+
+
+@app.route('/api/hephaestus/approve', methods=['POST'])
+def api_hephaestus_approve():
+    """Approve a pending H1/H3 sandbox gate from the dashboard (parity w/ CLI)."""
+    from hephaestus import cli_core
+    data = request.get_json(silent=True) or {}
+    run_id, gate = data.get("run_id"), data.get("gate")
+    if not _valid_run_id(run_id) or gate not in ("H1", "H3"):
+        return jsonify({"ok": False, "error": "valid hex run_id and gate (H1|H3) required"}), 400
+    res = cli_core.approve_gate(run_id, str(gate))
+    return jsonify(res), (200 if res.get("ok") else 404)
+
+
+@app.route('/api/hephaestus/reject', methods=['POST'])
+def api_hephaestus_reject():
+    """Reject a pending H1/H3 gate (first-class outcome; audited with reason)."""
+    from hephaestus import cli_core
+    data = request.get_json(silent=True) or {}
+    run_id, gate = data.get("run_id"), data.get("gate")
+    reason = (data.get("reason") or "").strip()
+    if not _valid_run_id(run_id) or gate not in ("H1", "H3"):
+        return jsonify({"ok": False, "error": "valid hex run_id and gate (H1|H3) required"}), 400
+    res = cli_core.reject_gate(run_id, str(gate), reason)
+    return jsonify(res), (200 if res.get("ok") else 404)
+
+
+@app.route('/api/hephaestus/improvement/<run_id>')
+def api_hephaestus_improvement(run_id):
+    """Return the improvement-plan markdown for a run (proposals, not applied)."""
+    safe = re.sub(r"[^a-zA-Z0-9]", "", run_id)  # run_ids are hex
+    path = Path.home() / ".strikecore" / "hephaestus" / "improvements" / f"{safe}.md"
+    if not path.is_file():
+        return jsonify({"ok": False, "error": "no improvement plan for this run"}), 404
+    try:
+        return jsonify({"ok": True, "run_id": safe,
+                        "markdown": path.read_text(encoding="utf-8")})
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+
+def _heph_audit_trail(limit: int = 30) -> list[dict]:
+    """Recent Hephaestus + registry mutating events from the audit JSONL chain."""
+    events: list[dict] = []
+    if not AUDIT_DIR.is_dir():
+        return events
+    files = sorted(AUDIT_DIR.glob("*.jsonl"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)[:3]
+    for f in files:
+        try:
+            lines = f.read_text(encoding="utf-8").splitlines()
+        except OSError:
+            continue
+        for line in reversed(lines):
+            try:
+                e = json.loads(line)
+            except (json.JSONDecodeError, ValueError):
+                continue
+            ev = str(e.get("event", ""))
+            if e.get("component") == "hephaestus" or ev.startswith(("regist", "dereg")):
+                events.append(e)
+                if len(events) >= limit:
+                    return events
+    return events
 
 
 @app.route('/api/control-room/state')

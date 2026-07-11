@@ -299,6 +299,12 @@ All three dossier paths write here: the console `dossier` command, `bin/intel-te
 and `bin/agent-dossier.py`. Capture is additive and failure-isolated — it can never
 break a dossier run. The single source of truth is `core/dossier_output.py`.
 
+**Transcript capture** goes through `dossier_output.tee_streams()`, which tees
+`sys.stdout` + `sys.stderr` for the whole run. This captures every default Rich
+`Console()` (StrikeCore holds several — the shell and `nlp_engine` each own one)
+plus raw `print`, in one ANSI-stripped transcript. (The earlier `record_console`
+approach recorded a single Console instance and produced empty `output.log`s.)
+
 Hephaestus consumes that folder to **autoimprove dossier mode**:
 
 ```bash
@@ -315,5 +321,33 @@ empty BLUF/key-judgment sections), runs routed research, and proposes fixes:
   `~/.strikecore/hephaestus/improvements/<run_id>.md` and **surfaced, not
   auto-applied** (GR5; `NL_SYSTEM_PROMPT` stays preserved per CLAUDE.md section 10).
 
+**Full-transcript ingestion (map-reduce).** Hephaestus reads the COMPLETE
+`output.log` of every run in the window: a bulk-tier (Haiku) *map* step extracts
+per-run evidence (tools, failures, findings, empty sections) from the whole
+transcript — chunked for large logs — and the *reduce* step feeds that evidence,
+not just a one-line digest, into the Fable-tier gap analysis (GR3). Proof of what
+was read is stored in `dossier_gap_analysis.log_ingestion[]` (`run`, `log_chars`,
+`summary`).
+
 The run record gains a `dossier_gap_analysis` block (`outputs_considered`,
-`improvement_plan_path`, `gaps[]`); `hephaestus report` shows a one-line gap summary.
+`improvement_plan_path`, `gaps[]`, `log_ingestion[]`); `hephaestus report` shows a
+one-line gap + ingestion summary.
+
+### 6.1 Gate control & visibility (CLI + dashboard)
+
+H1/H3 sandbox gates can be **approved or rejected** from either surface:
+
+```bash
+hephaestus approve <run_id> <H1|H3>            # clear a gate
+hephaestus reject  <run_id> <H1|H3> [reason]   # first-class rejection (audited)
+```
+
+Rejection is a first-class outcome (distinct from leaving a gate pending): the
+gate moves to `rejected_approvals[]` with the operator reason and a SHA-256 audit
+entry. The **Flask dashboard `/hephaestus` page** exposes Approve/Reject buttons
+(`POST /api/hephaestus/approve|reject`) plus visibility into what a run touched:
+the `git_actions` ledger, rejected gates, the `dossier_gap_analysis` (with the
+full-transcript ingestion proof), an on-demand improvement-plan viewer
+(`/api/hephaestus/improvement/<run_id>`), and an audit-chain mutation trail. The
+`hephaestus run` agent stays propose-only — it never auto-applies prompt/flow/config
+changes.
