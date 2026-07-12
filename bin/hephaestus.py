@@ -110,6 +110,16 @@ def cmd_approve(args) -> int:
     return EXIT_OK
 
 
+def cmd_reject(args) -> int:
+    res = cli_core.reject_gate(args.run_id, args.gate, args.reason or "")
+    if not res["ok"]:
+        print(res["error"], file=sys.stderr)
+        return EXIT_NOTFOUND
+    print(f"rejected {args.gate} for run {args.run_id}; "
+          f"{res['remaining']} gate(s) still pending.")
+    return EXIT_OK
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="hephaestus",
                                 description="StrikeCore toolsmith agent CLI.")
@@ -142,6 +152,12 @@ def main(argv=None) -> int:
     pa.add_argument("run_id")
     pa.add_argument("gate", choices=["H1", "H3"])
     pa.set_defaults(func=cmd_approve)
+
+    prj = sub.add_parser("reject", help="reject a pending sandbox gate")
+    prj.add_argument("run_id")
+    prj.add_argument("gate", choices=["H1", "H3"])
+    prj.add_argument("--reason", default="", help="operator reason (audited)")
+    prj.set_defaults(func=cmd_reject)
 
     args = p.parse_args(argv)
     return args.func(args)

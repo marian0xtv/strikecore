@@ -86,8 +86,17 @@ def summary_lines(rec: dict) -> list[str]:
         out.append(f"  dossier gaps: {len(dga.get('gaps', []))} from "
                    f"{dga.get('outputs_considered', 0)} output(s)  "
                    f"-> plan: {dga.get('improvement_plan_path', '')}")
+        li = dga.get("log_ingestion") or []
+        if li:
+            read = sum(1 for s in li if s.get("log_chars"))
+            chars = sum(s.get("log_chars", 0) for s in li)
+            out.append(f"  log ingestion: read {read}/{len(li)} transcript(s), "
+                       f"{chars} chars total")
     for p in rec["pending_approvals"]:
         out.append(f"  PENDING {p['gate']}: {p['reason']}")
+    for p in rec.get("rejected_approvals", []):
+        note = f" ({p['note']})" if p.get("note") else ""
+        out.append(f"  REJECTED {p['gate']}: {p.get('candidate','')}{note}")
     return out
 
 
@@ -182,4 +191,42 @@ def approve_gate(run_id: str, gate: str) -> dict[str, Any]:
         rec["status"] = "completed"
     run_record.save(rec)
     audit("approve", run_id, {"gate": gate})
+    return {"ok": True, "error": None, "remaining": len(remaining)}
+
+
+def reject_gate(run_id: str, gate: str, reason: str = "") -> dict[str, Any]:
+    """Reject a pending H1/H3 gate (first-class, distinct from deferral).
+
+    Moves the gate out of ``pending_approvals`` into ``rejected_approvals`` with
+    the operator's reason, records a ``gate_rejected`` git_action, and writes the
+    decision to the SHA-256 audit chain. Returns {ok, error, remaining}.
+    """
+    path = run_record_path(run_id)
+    if not path.exists():
+        return {"ok": False, "error": f"no such run: {run_id}", "remaining": 0}
+    rec = json.loads(path.read_text())
+    remaining = [p for p in rec["pending_approvals"] if p["gate"] != gate]
+    rejected = [p for p in rec["pending_approvals"] if p["gate"] == gate]
+    if not rejected:
+        return {"ok": False, "error": f"no pending {gate} gate on run {run_id}",
+                "remaining": len(remaining)}
+    rec["pending_approvals"] = remaining
+    note = (reason or "").strip()[:400]
+    rej_list = rec.setdefault("rejected_approvals", [])
+    for p in rejected:
+        rej_list.append({
+            "gate": gate,
+            "reason": p.get("reason", ""),
+            "candidate": p.get("candidate", ""),
+            "note": note,
+            "decided_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        })
+    rec.setdefault("git_actions", []).append(
+        {"action": f"gate_rejected:{gate}",
+         "detail": f"operator rejected {gate} for {rejected[0].get('candidate','')}"
+                   + (f": {note}" if note else "")})
+    if not remaining:
+        rec["status"] = "completed"
+    run_record.save(rec)
+    audit("reject", run_id, {"gate": gate, "reason": note})
     return {"ok": True, "error": None, "remaining": len(remaining)}

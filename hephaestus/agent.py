@@ -44,12 +44,28 @@ _HEPH_SYSTEM = (
 
 _DOSSIER_SYSTEM = (
     "You are Hephaestus running a dossier-mode autoimprove pass. You are given a "
-    "digest of StrikeCore's recent dossier outputs. Assess where dossier mode is "
+    "digest of StrikeCore's recent dossier outputs AND evidence extracted from the "
+    "COMPLETE verbose run transcripts. Assess where dossier mode is "
     "weakest (coverage gaps, low-confidence/doctrine violations, tool failures, "
     "empty sections), prioritise the gaps, and recommend concrete improvements. "
     "Distinguish gaps that need a NEW TOOL from gaps that need a prompt/flow/config "
     "change. Never propose rewriting the preserved NL_SYSTEM_PROMPT."
 )
+
+# Map step of the dossier-log map-reduce: cheap per-fragment extraction (Haiku).
+_LOG_MAP_SYSTEM = (
+    "You are Hephaestus reading a fragment of a StrikeCore dossier run transcript. "
+    "Extract only what is present, terse and factual: tools invoked, "
+    "failures/errors (quote the marker), findings produced, empty/aborted sections, "
+    "and any coverage gap the run reveals. No preamble, no recommendations."
+)
+
+# Bounds for reading the COMPLETE output.log on the GR3 bulk tier. Map cost is
+# bounded per run (<= _MAX_LOG_CHARS / _LOG_CHUNK Haiku calls); total cost scales
+# with the operator-chosen ``outputs_limit`` window, not the log size.
+_LOG_CHUNK = 24_000          # chars per map-window sent to the bulk model
+_MAX_LOG_CHARS = 240_000     # per-run ceiling (head+tail kept beyond this)
+_MAX_LOG_EVIDENCE = 16_000   # combined per-run evidence fed into the reduce call
 
 # StrikeCore's standing OSINT capability gaps (from the Phase-1 gap map).
 _KNOWN_GAPS = [
@@ -153,6 +169,54 @@ class Hephaestus:
                     pending.append(g)
                     rep.gate_result(g, False, None)
         return pending, git_actions
+
+    # ------------------------------------------------------------------
+    # Dossier-log map step: read the COMPLETE transcripts (GR3 bulk tier)
+    # ------------------------------------------------------------------
+    async def _summarize_logs(self, rep, runs: list[dict], dry_run: bool) -> list[dict]:
+        """Map each run's ENTIRE output.log to compact evidence via a cheap
+        routed call, chunking large logs. Returns per-run
+        ``{run, log_chars, summary}`` (empty summary when the log is empty).
+
+        This is what makes Hephaestus actually READ the complete verbose dossier
+        output: every transcript is ingested (chunked map -> Haiku), then the
+        combined evidence feeds the reduce-tier gap analysis.
+        """
+        summaries: list[dict] = []
+        for r in runs:
+            name = r["dir"].name if r.get("dir") is not None else "?"
+            try:
+                log = r["log_path"].read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                log = ""
+            log = log.strip()
+            if not log:
+                summaries.append({"run": name, "log_chars": 0, "summary": ""})
+                continue
+            clipped = log
+            if len(clipped) > _MAX_LOG_CHARS:
+                half = _MAX_LOG_CHARS // 2
+                clipped = (clipped[:half]
+                           + "\n...[log truncated for length; head+tail kept]...\n"
+                           + clipped[-half:])
+            chunks = [clipped[i:i + _LOG_CHUNK]
+                      for i in range(0, len(clipped), _LOG_CHUNK)]
+            partials: list[str] = []
+            for ci, ch in enumerate(chunks):
+                if dry_run:
+                    partials.append("log reviewed")
+                    continue
+                text = await self._stream(
+                    rep, label=f"log map: {name} [{ci + 1}/{len(chunks)}]",
+                    task_type="hephaestus:extract", dry_run=dry_run,
+                    system=_LOG_MAP_SYSTEM,
+                    content=("Extract evidence from this dossier-run transcript "
+                             "fragment:\n\n" + ch))
+                partials.append(text.strip())
+            summary = "\n".join(p for p in partials if p)
+            summaries.append({"run": name, "log_chars": len(log),
+                              "summary": summary[:2000]})
+        return summaries
 
     async def run(
         self,
@@ -297,7 +361,16 @@ class Hephaestus:
         heuristic_gaps = _heuristic_dossier_gaps(runs)
         digest = _digest_outputs(runs)
 
-        # 2) Dossier gap analysis — routed Fable call (assessment / prioritisation).
+        # 1b) Map step — read the COMPLETE verbose transcripts (GR3 bulk tier).
+        rep.phase("dossier-logs", "reading full transcripts")
+        log_summaries = await self._summarize_logs(rep, runs, dry_run)
+        log_evidence = _format_log_evidence(log_summaries)
+        n_read = sum(1 for s in log_summaries if s["log_chars"])
+        rep.info(f"ingested {n_read}/{len(runs)} transcript(s) "
+                 f"({sum(s['log_chars'] for s in log_summaries)} chars total)")
+
+        # 2) Dossier gap analysis — routed Fable call (assessment / prioritisation),
+        #    now grounded in the full-transcript evidence, not just the digest.
         rep.phase("dossier-gap")
         assessment = ""
         if runs:
@@ -305,11 +378,12 @@ class Hephaestus:
                 rep, label="dossier gap analysis", task_type="hephaestus:dossier_gap",
                 dry_run=dry_run, system=_DOSSIER_SYSTEM,
                 content=(
-                    "Here is a digest of recent StrikeCore dossier outputs. "
+                    "Here is a digest of recent StrikeCore dossier outputs plus "
+                    "evidence extracted from their COMPLETE verbose transcripts. "
                     "Assess and prioritise the gaps and recommend fixes. If you "
                     "respond as JSON, use {\"gaps\":[{\"category\",\"severity\","
                     "\"evidence\",\"proposed_fix_kind\",\"proposed_fix\"}]}.\n\n"
-                    + digest))
+                    + digest + log_evidence))
         else:
             rep.info("no dossier outputs found — nothing to improve yet")
 
@@ -376,6 +450,7 @@ class Hephaestus:
             "outputs_considered": len(runs),
             "improvement_plan_path": str(plan_path),
             "gaps": gaps,
+            "log_ingestion": log_summaries,
         }
         return {"candidates": candidates, "research": research,
                 "gap_analysis": gap_analysis, "decisions": decisions,
@@ -511,9 +586,13 @@ def _as_float(v: Any) -> float:
 
 
 def _digest_outputs(runs: list[dict]) -> str:
-    """Compact, bounded text digest of captured dossier outputs for the LLM."""
+    """Compact, bounded text digest of captured dossier outputs for the LLM.
+
+    Covers the same run set as the log map step (all runs in the ``outputs_limit``
+    window); the final ``[:6000]`` still bounds the digest length.
+    """
     lines: list[str] = [f"dossier_outputs: {len(runs)}"]
-    for r in runs[:10]:
+    for r in runs:
         meta = r.get("meta") or {}
         domains = _domains_of(r)
         n_find = sum(1 for _ in _iter_findings(r))
@@ -521,6 +600,24 @@ def _digest_outputs(runs: list[dict]) -> str:
             f"- source={meta.get('source','?')} target={meta.get('target','?')} "
             f"domains={domains or '[]'} findings={n_find}")
     return "\n".join(lines)[:6000]
+
+
+def _format_log_evidence(summaries: list[dict]) -> str:
+    """Render per-run log evidence for the reduce-tier gap analysis call.
+
+    Bounded to ``_MAX_LOG_EVIDENCE`` chars so the reduce call stays cost-aware
+    even when many transcripts are ingested. Empty-log runs are omitted.
+    """
+    blocks: list[str] = []
+    for s in summaries:
+        if not s.get("summary"):
+            continue
+        blocks.append(f"[{s['run']}] ({s['log_chars']} chars)\n{s['summary']}")
+    if not blocks:
+        return ""
+    body = "\n\n".join(blocks)[:_MAX_LOG_EVIDENCE]
+    return ("\n\nPER-RUN LOG EVIDENCE (extracted from the COMPLETE transcripts):\n"
+            + body)
 
 
 def _write_improvement_plan(run_id: str, gaps: list[dict], assessment: str,

@@ -93,6 +93,20 @@
               "proposed_fix": { "type": "string" }
             }
           }
+        },
+        "log_ingestion": {
+          "type": "array",
+          "description": "Per-run evidence Hephaestus extracted from the COMPLETE output.log transcripts (map step of the dossier-log map-reduce).",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["run", "log_chars"],
+            "properties": {
+              "run": { "type": "string" },
+              "log_chars": { "type": "integer", "minimum": 0 },
+              "summary": { "type": "string" }
+            }
+          }
         }
       }
     },
@@ -132,6 +146,22 @@
           "gate": { "type": "string", "enum": ["H1", "H3"] },
           "reason": { "type": "string" },
           "candidate": { "type": "string" }
+        }
+      }
+    },
+    "rejected_approvals": {
+      "type": "array",
+      "description": "H1/H3 gates the operator explicitly REJECTED (first-class outcome, distinct from still-pending). Auditable and reversible by re-running.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["gate", "reason", "decided_at"],
+        "properties": {
+          "gate": { "type": "string", "enum": ["H1", "H3"] },
+          "reason": { "type": "string" },
+          "candidate": { "type": "string" },
+          "note": { "type": "string" },
+          "decided_at": { "type": "string" }
         }
       }
     },

@@ -616,6 +616,7 @@ class StrikeCoreShell:
         hephaestus status                   list past runs + cost
         hephaestus report [run_id]          run report (latest if omitted)
         hephaestus approve <run_id> <H1|H3> clear a pending sandbox gate
+        hephaestus reject  <run_id> <H1|H3> [reason]  reject a pending gate
         """
         from hephaestus import cli_core
 
@@ -694,8 +695,21 @@ class StrikeCoreShell:
                           f"{res['remaining']} gate(s) still pending.[/{THEME['success']}]")
             return
 
+        if sub == "reject":
+            if len(args) < 3 or args[2] not in ("H1", "H3"):
+                console.print(f"[{THEME['warning']}]Usage: hephaestus reject <run_id> <H1|H3> [reason][/{THEME['warning']}]")
+                return
+            reason = " ".join(args[3:]) if len(args) > 3 else ""
+            res = cli_core.reject_gate(args[1], args[2], reason)
+            if not res["ok"]:
+                console.print(f"[{THEME['warning']}]{res['error']}[/{THEME['warning']}]")
+                return
+            console.print(f"[{THEME['success']}]rejected {args[2]} for run {args[1]}; "
+                          f"{res['remaining']} gate(s) still pending.[/{THEME['success']}]")
+            return
+
         console.print(f"[{THEME['warning']}]Unknown: hephaestus {sub}. "
-                      f"Try: status | run | report | approve[/{THEME['warning']}]")
+                      f"Try: status | run | report | approve | reject[/{THEME['warning']}]")
 
     @staticmethod
     def _flag_value(args: List[str], flag: str) -> str | None:
@@ -1300,7 +1314,7 @@ class StrikeCoreShell:
         started = datetime.now(timezone.utc).isoformat(timespec="seconds")
         transcript = ""
         if dossier_output is not None:
-            with dossier_output.record_console(console) as cap:
+            with dossier_output.tee_streams() as cap:
                 self._nlp.process(prompt)
             transcript = cap.get("text", "")
         else:

@@ -105,7 +105,7 @@ async def _amain(args: argparse.Namespace) -> int:
     started = datetime.now(timezone.utc).isoformat(timespec="seconds")
     router = ProviderRouter(get_settings())
     if dossier_output is not None:
-        with dossier_output.tee_stdout() as _buf:
+        with dossier_output.tee_streams() as _cap:
             result = await build_dossier(
                 router=router,
                 target=args.target,
@@ -114,7 +114,7 @@ async def _amain(args: argparse.Namespace) -> int:
                 constraints=_parse_constraints(args.constraint),
                 investigation_store=store,
             )
-            transcript = _buf.getvalue()
+        transcript = _cap.get("text", "")
     else:
         result = await build_dossier(
             router=router,
