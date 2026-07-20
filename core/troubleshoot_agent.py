@@ -148,12 +148,32 @@ class TroubleshootAgent:
         return len(cleaned) < 5
 
     def _extract_target(self, command: str) -> str:
-        """Extract the target (username/email/URL) from a command."""
+        """Extract the target (username/email/URL) from a command.
+
+        Prefers the first bare positional argument after the tool name
+        (`sherlock TARGET --print-found`, `socialscan TARGET ... --platforms
+        ...`). Falls back to the value immediately following the first flag
+        for tools that take the target as a flag argument (`blackbird -u
+        TARGET`, `h8mail -t TARGET`). A plain reverse scan for the last
+        non-flag token — the previous approach — grabs a value out of a
+        trailing multi-value flag (e.g. `--platforms twitter spotify github
+        instagram` picks "instagram") instead of the real target.
+        """
         parts = command.split()
-        # Skip the tool name and flags
-        for p in reversed(parts):
-            if not p.startswith("-") and not p.startswith("/"):
+        args = parts[1:]  # skip tool name
+
+        for p in args:
+            if p.startswith("-"):
+                break
+            if not p.startswith("/"):
                 return p.strip("'\"")
+
+        for i, p in enumerate(args):
+            if p.startswith("-") and i + 1 < len(args):
+                nxt = args[i + 1]
+                if not nxt.startswith("-") and not nxt.startswith("/"):
+                    return nxt.strip("'\"")
+
         return ""
 
     def _generate_fix(self, tool: str, command: str, strategy: str, err_type: str) -> Optional[dict]:

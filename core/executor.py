@@ -349,6 +349,15 @@ class Executor:
 
         # -- Environment -------------------------------------------------
         run_env = dict(os.environ)
+        # PYTHONPATH=/app is set container-wide so StrikeCore's own process
+        # can import core/config; external tools (blackbird, photon,
+        # osintgram, ...) ship their own top-level `config` module that
+        # this shadows, causing AttributeError on tool-specific config
+        # symbols. Internal StrikeCore scripts under bin/ insert their own
+        # project root at sys.path[0], so they never relied on this being
+        # inherited. Drop it here; callers that genuinely need it can pass
+        # PYTHONPATH explicitly via `env`.
+        run_env.pop("PYTHONPATH", None)
         # Ensure user tool directories are always in PATH
         _extra_paths = [
             os.path.expanduser("~/.local/bin"),
@@ -517,6 +526,8 @@ class Executor:
                 raise PermissionError(f"Command blocked: {reason}")
 
         run_env = dict(os.environ)
+        # See execute() above for why PYTHONPATH is stripped by default.
+        run_env.pop("PYTHONPATH", None)
         # Ensure user tool directories are always in PATH
         _extra_paths = [
             os.path.expanduser("~/.local/bin"),

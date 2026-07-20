@@ -1,6 +1,10 @@
 # StrikeCore .gitignore — engineered 2026-05-15
 # Doctrine: never commit secrets, never commit venv binaries, never commit target PII.
 
+# ── Crash artifacts — may contain decrypted secrets/tokens from process memory ──
+core.[0-9]*
+/core
+
 # ── Outer venv pollution (project root happens to be a venv — historical) ──
 /bin/python
 /bin/python3
