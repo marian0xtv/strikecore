@@ -18,6 +18,15 @@ from typing import Any, Dict, List, Optional
 STORE_DIR = Path.home() / "strikecore-data" / "investigations"
 
 
+class InvestigationStoreUnavailable(RuntimeError):
+    """Raised when the Postgres-backed investigation store can't be reached.
+
+    Distinct from a generic AI/provider error so callers (and the shell's
+    catch-all handler) can tell a DB outage apart from an LLM failure instead
+    of both surfacing as an indistinguishable "AI error: ...".
+    """
+
+
 # ---------------------------------------------------------------------------
 # Confidence scoring system
 # ---------------------------------------------------------------------------
@@ -106,9 +115,14 @@ class InvestigationStore:
         # shape is unchanged — it lives intact in the `investigation.data` JSONB
         # column, so all ~20 methods below and their 18 consumers are untouched.
         from core import pg
-        with pg.cursor() as cur:
-            cur.execute("SELECT data FROM investigation WHERE target_id = %s", (self.target_id,))
-            row = cur.fetchone()
+        try:
+            with pg.cursor() as cur:
+                cur.execute("SELECT data FROM investigation WHERE target_id = %s", (self.target_id,))
+                row = cur.fetchone()
+        except Exception as exc:  # noqa: BLE001 — Postgres is the authoritative store, not best-effort
+            raise InvestigationStoreUnavailable(
+                f"investigation store (Postgres) unreachable while loading '{self.target_id}': {exc}"
+            ) from exc
         if row and row.get("data") is not None:
             return row["data"]
         return {
@@ -138,13 +152,18 @@ class InvestigationStore:
         # Round-trip through json(default=str) so non-JSON types (datetime etc.)
         # serialise exactly as the legacy file store did before hitting JSONB.
         payload = json.loads(json.dumps(self.data, default=str))
-        with pg.cursor() as cur:
-            cur.execute(
-                "INSERT INTO investigation (target_id, data, updated) "
-                "VALUES (%s, %s, NOW()) "
-                "ON CONFLICT (target_id) DO UPDATE SET data = EXCLUDED.data, updated = NOW()",
-                (self.target_id, Json(payload)),
-            )
+        try:
+            with pg.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO investigation (target_id, data, updated) "
+                    "VALUES (%s, %s, NOW()) "
+                    "ON CONFLICT (target_id) DO UPDATE SET data = EXCLUDED.data, updated = NOW()",
+                    (self.target_id, Json(payload)),
+                )
+        except Exception as exc:  # noqa: BLE001 — Postgres is the authoritative store, not best-effort
+            raise InvestigationStoreUnavailable(
+                f"investigation store (Postgres) unreachable while saving '{self.target_id}': {exc}"
+            ) from exc
 
     # ── Adders (accumulate, never overwrite) ──
 
